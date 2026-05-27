@@ -396,7 +396,7 @@ def page_calculation(api_key: str, panel: dict):
         condition = st.text_area(
             "調査ターゲット条件",
             placeholder=(
-                "例：新NISAなど長期の放置型運用（ほったらかし投資）を行っている方（投資歴3年以内）\n"
+                "例：大学在学中に「合宿免許」で自動車免許を取得した18〜23歳の男女\n"
                 "例：小学生以下の子どもを持つ共働き世帯の母親"
             ),
             height=110,
