@@ -396,8 +396,8 @@ def page_calculation(api_key: str, panel: dict):
         condition = st.text_area(
             "調査ターゲット条件",
             placeholder=(
-                "例：大学在学中に「合宿免許」で自動車免許を取得した18〜23歳の男女\n"
-                "例：小学生以下の子どもを持つ共働き世帯の母親"
+                "例：ここに表示したい条件例を入力してください\n"
+                "例：2つ目の例文をここに入力"
             ),
             height=110,
         )
@@ -552,10 +552,16 @@ def page_panel_setup():
                 df = pd.read_csv(uploaded, header=0)
                 current = load_panel()
                 count_imported = 0
-                for _, row in df.iterrows():
-                    cat   = str(row.iloc[0]).strip()
-                    val   = str(row.iloc[1]).strip()
-                    count = int(str(row.iloc[2]).replace(",", "").strip())
+                skip_rows = []
+                for idx, row in df.iterrows():
+                    cat = str(row.iloc[0]).strip()
+                    val = str(row.iloc[1]).strip()
+                    # 数字以外の値はスキップ
+                    try:
+                        count = int(str(row.iloc[2]).replace(",", "").replace("人", "").strip())
+                    except ValueError:
+                        skip_rows.append(f"行{idx+2}：「{row.iloc[2]}」は数字ではないためスキップ")
+                        continue
                     if cat == "総数":
                         current["total"] = count
                         count_imported += 1
@@ -570,6 +576,8 @@ def page_panel_setup():
                         count_imported += 1
                 _save_json(PANEL_FILE, current)
                 st.success(f"✅ {count_imported}件を取り込み、保存しました！")
+                if skip_rows:
+                    st.warning("以下の行は数字でないためスキップしました：\n" + "\n".join(skip_rows))
                 st.dataframe(df, use_container_width=True, hide_index=True)
             except Exception as e:
                 st.error(f"読み込みエラー: {e}")
