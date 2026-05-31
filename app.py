@@ -3,6 +3,7 @@
 クライアントの調査条件から回収見込み数・難易度を自動推計します
 """
 
+import re
 import streamlit as st
 import anthropic
 import json
@@ -192,9 +193,14 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
         for cat_name, cat_info in panel["attributes"].items():
             cov = cat_info.get("coverage", 0)
             reliability = "完全回収" if cov >= 0.85 else f"部分回収（回答率{cov*100:.0f}%）"
+            data = cat_info.get("data", {})
             lines.append(f"\n【{cat_name}】（{reliability}）")
-            for val, cnt in cat_info.get("data", {}).items():
+            # プロンプト長抑制のため上位15件のみ表示
+            items = sorted(data.items(), key=lambda x: x[1], reverse=True)
+            for val, cnt in items[:15]:
                 lines.append(f"  {val}: {cnt:,}人")
+            if len(items) > 15:
+                lines.append(f"  ※他{len(items)-15}件省略")
     panel_text = "\n".join(lines)
 
     user_prompt = f"""以下の市場調査ターゲット条件を分析し、モニターパネルからの回収見込みを推計してください。
@@ -279,17 +285,33 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 
     res = client.messages.create(
         model=MODEL,
-        max_tokens=2000,
-        system="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。",
+        max_tokens=3000,
+        system="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。マークダウンのコードブロックは使わず、JSONオブジェクトをそのまま返してください。",
         messages=[{"role": "user", "content": user_prompt}],
     )
     text = res.content[0].text.strip()
+
+    # コードブロック除去
     if "```" in text:
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.split("```")[0]
-    return json.loads(text.strip())
+        for block in text.split("```")[1::2]:
+            candidate = block.lstrip("json").strip()
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+
+    # テキストをそのままパース
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 最終手段：{ } で囲まれた最初のJSONオブジェクトを抽出
+    m = re.search(r"\{[\s\S]*\}", text)
+    if m:
+        return json.loads(m.group())
+
+    raise json.JSONDecodeError("JSONを抽出できませんでした", text, 0)
 
 
 # ─────────────────────────────────────────────────────────────────
