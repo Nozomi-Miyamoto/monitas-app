@@ -158,11 +158,11 @@ def _parse_monitas_csv(df: pd.DataFrame) -> dict:
 
 def _difficulty(adj_inc: float, adj_est_min: int) -> tuple[str, str, str]:
     """補正後出現率・固め人数 → (ラベル, color, 説明文)"""
-    if adj_inc >= 5.0 and adj_est_min >= 500:
+    if adj_inc >= 8.0 and adj_est_min >= 1000:
         return "易", "success", "回収しやすい条件です。十分な人数が見込めます。"
-    elif adj_inc >= 1.5 and adj_est_min >= 200:
+    elif adj_inc >= 3.0 and adj_est_min >= 300:
         return "普通", "info", "標準的な回収難易度です。"
-    elif adj_inc >= 0.4 and adj_est_min >= 50:
+    elif adj_inc >= 0.8 and adj_est_min >= 80:
         return "難", "warning", "回収に工夫が必要な条件です。緩和措置も検討してください。"
     else:
         return "困難", "error", "回収が非常に困難です。条件の見直しを強く推奨します。"
@@ -234,7 +234,8 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
     {{
       "action": "緩和する内容（例: 年代を60代まで拡大）",
       "additional_est": 1500,
-      "trade_off": "緩和した場合の条件純度・品質への影響"
+      "trade_off": "緩和した場合の条件純度・品質への影響",
+      "recommended": false
     }}
   ],
   "warnings": []
@@ -255,12 +256,21 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 
 ・behavioral_rate: 必ず保守的な値に設定すること
   - 属性合致でも詳細スクリーニングで外れるケースが多い
-  - 純粋な属性条件のみでも最大0.80に抑えること（申告と実態の乖離を考慮）
-  - 行動・経験条件がある場合は0.05〜0.30程度
+  - 純粋な属性条件のみでも最大0.70に抑えること（申告と実態の乖離を考慮）
+  - 行動・経験条件がある場合は0.05〜0.25程度
+  - 【特に重要】業種フィルタが含まれる場合：業種での絞り込みはスクリーニング離脱率が特に高い。
+    業種合致者でも詳細条件・職種・業務内容まで確認するとさらに絞られ、
+    実際に条件を満たすのは業種合致者の30〜50%程度。behavioral_rateは0.20〜0.45の範囲で設定すること。
+  - 職種・役職フィルタが含まれる場合も同様に0.25〜0.50の範囲に抑えること
 
-・relaxation_suggestions: 2〜3件、現実的で具体的な緩和案を提示すること
-  - additional_est はパネルデータの実数と行動率を踏まえたAI推計値（概算）
-  - 条件の「核」を保ちつつ、周辺を緩和するアイデアを提案する
+・relaxation_suggestions: 3件、具体的かつ効果的な緩和案を提示すること
+  - 【重要】元の条件に書かれていない次元（年代・地域・性別・婚姻状況・職業など）も自由に緩和案として提案してよい
+    例）条件に年代指定がなくても「年代を〇〇代まで絞らず広げる」を提案可
+    例）条件に地域指定がなくても「首都圏限定にすれば純度が上がる」を提案可
+  - additional_est はパネルデータの実数と行動率を踏まえたAI推計（概算）
+  - 3件のうち最も効果的・現実的な1件に recommended: true を設定すること
+    （条件の本質を保ちながら、最も効率よく回収数を増やせる案）
+  - 残り2件は recommended: false
   - 緩和した場合のデメリット・純度への影響を必ずtrade_offに記載する
 
 ・confidence: high（公的統計を具体的に引用可能）/ medium（業界推計あり）/ low（根拠が薄い）
@@ -417,7 +427,7 @@ def make_report(condition: str, analysis: dict, r: dict) -> str:
         "■ 回収見込み（パネル稼働率補正後）",
         f"  一般的な見込み ：約 {r['adj_est']:,}人（出現率 {r['adj_inc']}%）",
         f"  固めの見込み   ：約 {r['adj_est_min']:,}人（出現率 {r['adj_inc_min']}%）",
-        f"  ※パネル稼働率補正：{r['activity_rate']*100:.0f}%",
+        f"  ※パネル稼働率補正60%適用（パネル実回答率×スクリーニング完了率）",
         "",
     ]
 
@@ -505,12 +515,17 @@ def show_results(condition: str, analysis: dict, r: dict):
     if suggestions:
         st.divider()
         st.write("**💡 n数を増やしたい場合の緩和措置**")
-        st.caption("条件を少し変えた場合の追加回収見込み（AI推計・概算値）")
-        for s in suggestions:
+        st.caption("条件を変えた場合の追加回収見込み（AI推計・概算値）")
+        # おすすめを先頭に並び替え
+        sorted_suggestions = sorted(suggestions, key=lambda s: not s.get("recommended", False))
+        for s in sorted_suggestions:
             action      = s.get("action", "")
             additional  = s.get("additional_est", 0)
             trade_off   = s.get("trade_off", "")
+            is_recommended = s.get("recommended", False)
             with st.container(border=True):
+                if is_recommended:
+                    st.markdown("⭐ **おすすめ**")
                 st.write(f"**{action}**")
                 st.write(f"追加で約 **{additional:,}人** の回収見込み")
                 if trade_off:
@@ -599,17 +614,7 @@ def page_calculation(api_key: str, panel: dict):
         height=110,
     )
 
-    with st.expander("⚙️ 詳細設定（通常はデフォルトのままでOK）"):
-        activity_pct = st.slider(
-            "回収率補正 (%)",
-            min_value=30, max_value=90, value=60, step=5,
-            help=(
-                "パネル稼働率 × スクリーニング完了率の想定値。\n"
-                "難易度が高い条件（特定職種・行動経験者など）は低めに設定。\n"
-                "デフォルト60%＝業界の保守的な標準値。"
-            ),
-        )
-        activity_rate = activity_pct / 100
+    activity_rate = 0.60  # パネル稼働率固定値（業界標準の保守値）
 
     if not api_key:
         st.warning("サイドバーでClaude API Keyを設定してください。")
