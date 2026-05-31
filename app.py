@@ -21,11 +21,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-DATA_DIR    = "data"
-PANEL_FILE  = os.path.join(DATA_DIR, "panel_data.json")
+DATA_DIR     = "data"
+PANEL_FILE   = os.path.join(DATA_DIR, "panel_data.json")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
-CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-MODEL       = "claude-sonnet-4-6"
+CONFIG_FILE  = os.path.join(DATA_DIR, "config.json")
+MODEL        = "claude-sonnet-4-6"
 
 AGE_GROUPS  = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
 GENDERS     = ["男性", "女性"]
@@ -38,6 +38,9 @@ PREFECTURES = [
     "徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県",
     "熊本県","大分県","宮崎県","鹿児島県","沖縄県",
 ]
+
+# カバレッジ計算から除外する「未回答」扱いのキー
+UNKNOWN_KEYS = {"未取得", "わからない", "不明", "無回答"}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -60,10 +63,11 @@ def _save_json(path: str, data):
 
 def load_panel() -> dict:
     return _load_json(PANEL_FILE, {
-        "total": 0,
-        "age":   {a: 0 for a in AGE_GROUPS},
-        "gender": {"男性": 0, "女性": 0},
+        "total":      0,
+        "age":        {a: 0 for a in AGE_GROUPS},
+        "gender":     {"男性": 0, "女性": 0},
         "prefecture": {},
+        "attributes": {},   # 追加属性（未既婚・職業・業種・年収など）
     })
 
 
@@ -82,7 +86,108 @@ def save_config(cfg: dict):
 def append_history(entry: dict):
     history = load_history()
     history.insert(0, entry)
-    _save_json(HISTORY_FILE, history[:100])  # 最新100件を保持
+    _save_json(HISTORY_FILE, history[:100])
+
+
+# ─────────────────────────────────────────────────────────────────
+# モニタスCSV パーサー
+# ─────────────────────────────────────────────────────────────────
+
+def _parse_monitas_csv(df: pd.DataFrame) -> dict:
+    """モニタス母数シートのCSVを解析してパネルデータ辞書を返す。
+
+    対応フォーマット（列構成）:
+      カテゴリ, 属性値, 人数, [男性, 人数, 女性, 人数]
+    カテゴリ列が空の場合は直前のカテゴリを引き継ぐ。
+    70代・80代・90代以上は「70代以上」に自動統合する。
+    未取得・わからない等はカバレッジ計算から除外して信頼度を判定する。
+    """
+
+    def to_int(val) -> int:
+        if pd.isna(val):
+            return 0
+        s = str(val).replace(",", "").strip()
+        try:
+            return int(float(s))
+        except (ValueError, TypeError):
+            return 0
+
+    gender: dict     = {"男性": 0, "女性": 0}
+    age_raw: dict    = {}          # 生の年代データ（70代統合前）
+    prefecture: dict = {}          # 都道府県 → 人数
+    raw_attrs: dict  = {}          # その他カテゴリ → {値: 人数}
+
+    current_category: str | None = None
+
+    for _, row in df.iterrows():
+        cells = [str(v).strip() if not pd.isna(v) else "" for v in row]
+        while len(cells) < 7:
+            cells.append("")
+
+        col0, col1, col2 = cells[0], cells[1], cells[2]
+
+        # 完全空行はスキップ
+        if not col0 and not col1:
+            continue
+
+        # カテゴリ列が空でなければ更新
+        if col0:
+            current_category = col0
+
+        if not current_category or not col1:
+            continue
+
+        count = to_int(col2)
+
+        if current_category == "性別":
+            if col1 in ("男性", "女性"):
+                gender[col1] = count
+
+        elif current_category == "年代":
+            age_raw[col1] = count
+
+        elif current_category == "都道府県":
+            prefecture[col1] = count
+
+        else:
+            # その他すべてのカテゴリを汎用的に取り込む
+            if current_category not in raw_attrs:
+                raw_attrs[current_category] = {}
+            raw_attrs[current_category][col1] = count
+
+    # 年代：70代以上に統合
+    age = {a: 0 for a in AGE_GROUPS}
+    age_70plus = 0
+    for age_name, cnt in age_raw.items():
+        if age_name in ("70代", "80代", "90代以上"):
+            age_70plus += cnt
+        elif age_name in AGE_GROUPS:
+            age[age_name] = cnt
+    age["70代以上"] = age_70plus
+
+    # 総数（性別合計を正とし、取れない場合は年代合計を使う）
+    total = gender["男性"] + gender["女性"]
+    if total == 0:
+        total = sum(age.values())
+
+    # その他カテゴリ：カバレッジ計算
+    # coverage = (未取得・わからないを除いた回答数) / パネル総数
+    attributes: dict = {}
+    for cat_name, cat_data in raw_attrs.items():
+        answered = sum(v for k, v in cat_data.items() if k not in UNKNOWN_KEYS)
+        coverage = round(min(answered / total, 1.0), 3) if total > 0 else 0.0
+        attributes[cat_name] = {
+            "data":     cat_data,
+            "coverage": coverage,
+        }
+
+    return {
+        "total":      total,
+        "age":        age,
+        "gender":     gender,
+        "prefecture": prefecture,
+        "attributes": attributes,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -90,22 +195,33 @@ def append_history(entry: dict):
 # ─────────────────────────────────────────────────────────────────
 
 def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
-    """調査条件をClaudeで分析し、対象年代・出現率推計などを構造化して返す"""
+    """調査条件をClaudeで分析し、対象年代・属性フィルタ・出現率推計などを構造化して返す"""
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    # パネルデータをテキスト化
-    lines = [f"パネル総数: {panel['total']:,}人", "", "【年代別】"]
+    # ── パネルデータをテキスト化 ───────────────────────────────────
+    lines = [f"パネル総数: {panel['total']:,}人", "", "【年代別】（完全回収）"]
     for age, n in panel["age"].items():
         lines.append(f"  {age}: {n:,}人")
-    lines += ["", "【性別】"]
+    lines += ["", "【性別】（完全回収）"]
     for g, n in panel["gender"].items():
         lines.append(f"  {g}: {n:,}人")
+
     if panel.get("prefecture"):
         top = sorted(panel["prefecture"].items(), key=lambda x: x[1], reverse=True)[:10]
-        lines += ["", "【都道府県別（上位10件）】"]
+        lines += ["", "【都道府県別（上位10件）】（完全回収）"]
         for p, n in top:
             lines.append(f"  {p}: {n:,}人")
+
+    # 追加属性カテゴリ（カバレッジ付き）
+    if panel.get("attributes"):
+        for cat_name, cat_info in panel["attributes"].items():
+            cov = cat_info.get("coverage", 0)
+            reliability = "完全回収" if cov >= 0.85 else f"部分回収（回答率{cov*100:.0f}%）"
+            lines.append(f"\n【{cat_name}】（{reliability}）")
+            for val, cnt in cat_info.get("data", {}).items():
+                lines.append(f"  {val}: {cnt:,}人")
+
     panel_text = "\n".join(lines)
 
     user_prompt = f"""以下の市場調査ターゲット条件を分析し、モニターパネルの出現率を推計してください。
@@ -127,10 +243,18 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
   "include_genders": ["男性", "女性"],
   "prefecture_specified": false,
   "include_prefectures": [],
+  "attribute_filters": [
+    {{
+      "category": "カテゴリ名（例: 未既婚、職業、業種）",
+      "values": ["該当する属性値1", "該当する属性値2"],
+      "is_reliable": true,
+      "note": "このフィルタを選んだ理由・注意事項"
+    }}
+  ],
   "has_behavioral_condition": true,
-  "behavioral_rate": 0.05,
-  "behavioral_rate_min": 0.03,
-  "behavioral_rate_max": 0.08,
+  "behavioral_rate": 1.0,
+  "behavioral_rate_min": 1.0,
+  "behavioral_rate_max": 1.0,
   "behavioral_reasoning": "推計根拠（具体的な統計データ・調査名を引用）",
   "confidence": "medium",
   "warnings": []
@@ -140,21 +264,32 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 ・include_ages: この条件に現実的に該当しうる年代のみ含める
   例）NISA投資 → 10代を除外、20〜60代を含める
   例）子育て中 → 60代以上を除外、20代後半〜50代を含める
-  例）介護経験者 → 10〜30代を除外、40〜70代を含める
-・behavioral_rate: include_agesの合計人数のうち行動・態度条件に該当する割合（0〜1）
-・behavioral_rate_min/max: 推計の保守的〜楽観的な幅
+  例）介護経験者 → 10〜30代を除外、40〜70代以上を含める
+
+・attribute_filters: パネルデータに存在するカテゴリで条件に直接関連するものを設定する
+  - パネルデータに実際に存在するカテゴリ名・属性値のみを使う（存在しない値は使わない）
+  - 完全回収のカテゴリ（is_reliable=true）: 未既婚・子有無・職業・業種（勤めていない含む）・個人年収・世帯年収 など
+    → coverage 0.85以上のものは完全回収とみなしてよい
+  - 部分回収のカテゴリ（is_reliable=false）: 職種・役職・雇用形態・会社の売上規模・職場の規模 など
+    → 「未取得」が多く、実際の人数はこれより多い可能性がある。noteに明記する
+  - 条件に明示されていない属性は追加しない（過剰フィルタ禁止）
+  - 属性フィルタで条件の人口学的特性が完全に特定できる場合は behavioral_rate=1.0 でよい
+
+・behavioral_rate: attribute_filtersで絞った後の母数に対して、さらに行動・態度条件に該当する割合（0〜1）
+  - 属性フィルタ＋年代で既に対象を絞り切れる場合 → behavioral_rate=1.0
+  - 「経験あり」「利用中」「購入意向あり」など行動・態度が残る場合 → 統計的根拠に基づき推計
+
 ・confidence: high（信頼できる統計データあり）/ medium（一般的な推計）/ low（不確実性高い）
 ・性別・地域が条件に明示されていなければ specified = false
 """
 
     res = client.messages.create(
         model=MODEL,
-        max_tokens=1500,
+        max_tokens=2000,
         system="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。",
         messages=[{"role": "user", "content": user_prompt}],
     )
     text = res.content[0].text.strip()
-    # コードブロックが含まれていた場合に除去
     if "```" in text:
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -194,10 +329,38 @@ def calculate(panel: dict, analysis: dict, target_n: int) -> dict | None:
             p_count   = sum(panel["prefecture"].get(p, 0) for p in prefs)
             pref_ratio = p_count / total if total > 0 else 1.0
 
-    # ④ 人口学的ベース人数
-    demo_base = age_base * gender_ratio * pref_ratio
+    # ④ 追加属性フィルタ（未既婚・職業・業種・年収など）
+    attr_filter_details = []
+    attr_combined_ratio = 1.0
+    for af in analysis.get("attribute_filters", []):
+        cat_name = af.get("category", "")
+        values   = af.get("values", [])
+        if not cat_name or not values:
+            continue
+        cat_info = panel.get("attributes", {}).get(cat_name, {})
+        cat_data = cat_info.get("data", {})
+        coverage = cat_info.get("coverage", 1.0)
+        if not cat_data:
+            continue
+        matched = sum(cat_data.get(v, 0) for v in values)
+        ratio   = matched / total if total > 0 else 0.0
+        attr_combined_ratio *= ratio
+        attr_filter_details.append({
+            "category": cat_name,
+            "values":   values,
+            "matched":  matched,
+            "ratio":    round(ratio * 100, 2),
+            "coverage": coverage,
+            "reliable": af.get("is_reliable", coverage >= 0.85),
+            "note":     af.get("note", ""),
+        })
 
-    # ⑤ 行動・態度条件の出現率を適用
+    # ⑤ 人口学的ベース人数（全フィルタを独立性仮定で掛け合わせ）
+    # demo_base = total × age_ratio × gender_ratio × pref_ratio × 各属性ratio
+    age_ratio = age_base / total if total > 0 else 1.0
+    demo_base = total * age_ratio * gender_ratio * pref_ratio * attr_combined_ratio
+
+    # ⑥ 行動・態度条件の出現率を適用
     brate     = min(float(analysis.get("behavioral_rate",     1.0)), 1.0)
     brate_min = min(float(analysis.get("behavioral_rate_min", brate * 0.6)), 1.0)
     brate_max = min(float(analysis.get("behavioral_rate_max", brate * 1.4)), 1.0)
@@ -206,16 +369,16 @@ def calculate(panel: dict, analysis: dict, target_n: int) -> dict | None:
     est_min = demo_base * brate_min
     est_max = demo_base * brate_max
 
-    # ⑥ 全パネルに対する出現率（%）
+    # ⑦ 全パネルに対する出現率（%）
     inc     = est     / total * 100
     inc_min = est_min / total * 100
     inc_max = est_max / total * 100
 
-    # ⑦ 必要スクリーニング数
+    # ⑧ 必要スクリーニング数
     def req_ss(inc_pct: float) -> int:
         return int(target_n / (inc_pct / 100)) if inc_pct > 0 else 0
 
-    # ⑧ 実現可能性判定
+    # ⑨ 実現可能性判定
     if est_min >= target_n * 3:
         feasibility, fstatus = "達成見込み十分", "success"
     elif est_min >= target_n:
@@ -226,25 +389,26 @@ def calculate(panel: dict, analysis: dict, target_n: int) -> dict | None:
         feasibility, fstatus = "n数不足リスクあり", "error"
 
     return {
-        "total":              total,
-        "age_base":           int(age_base),
-        "demo_base":          int(demo_base),
-        "gender_ratio":       gender_ratio,
-        "pref_ratio":         pref_ratio,
-        "include_ages":       include_ages,
-        "exclude_ages":       analysis.get("exclude_ages", []),
-        "behavioral_rate":    brate,
-        "est":                int(est),
-        "est_min":            int(est_min),
-        "est_max":            int(est_max),
-        "inc":                round(inc,     2),
-        "inc_min":            round(inc_min, 2),
-        "inc_max":            round(inc_max, 2),
-        "req_ss":             req_ss(inc),
+        "total":               total,
+        "age_base":            int(age_base),
+        "demo_base":           int(demo_base),
+        "gender_ratio":        gender_ratio,
+        "pref_ratio":          pref_ratio,
+        "attr_filter_details": attr_filter_details,
+        "include_ages":        include_ages,
+        "exclude_ages":        analysis.get("exclude_ages", []),
+        "behavioral_rate":     brate,
+        "est":                 int(est),
+        "est_min":             int(est_min),
+        "est_max":             int(est_max),
+        "inc":                 round(inc,     2),
+        "inc_min":             round(inc_min, 2),
+        "inc_max":             round(inc_max, 2),
+        "req_ss":              req_ss(inc),
         "req_ss_conservative": req_ss(inc_min),
-        "feasibility":        feasibility,
-        "fstatus":            fstatus,
-        "target_n":           target_n,
+        "feasibility":         feasibility,
+        "fstatus":             fstatus,
+        "target_n":            target_n,
     }
 
 
@@ -270,6 +434,18 @@ def make_report(condition: str, analysis: dict, r: dict) -> str:
         f"  除外年代            ：{' / '.join(r['exclude_ages'])}",
         f"    └ 理由：{analysis.get('exclude_reason', '')}",
         f"  年代ベース人数      ：{r['age_base']:,}人",
+    ]
+
+    if r.get("attr_filter_details"):
+        lines.append("  属性フィルタ（絞り込み）：")
+        for af in r["attr_filter_details"]:
+            tag = "完全回収" if af.get("reliable") else f"部分回収（回答率{af['coverage']*100:.0f}%）"
+            lines.append(
+                f"    ・{af['category']}＝{' / '.join(af['values'])}"
+                f"　{af['matched']:,}人（全体の{af['ratio']}%）[{tag}]"
+            )
+
+    lines += [
         f"  調整後母数          ：{r['demo_base']:,}人",
         "",
         "■ 出現率推計",
@@ -318,6 +494,24 @@ def show_results(condition: str, analysis: dict, r: dict):
             st.write("　" + " ／ ".join(r["exclude_ages"]))
             st.caption(analysis.get("exclude_reason", ""))
 
+    # 属性フィルタ表示
+    if r.get("attr_filter_details"):
+        st.write("**🔍 属性フィルタ（パネルデータから直接絞り込み）**")
+        for af in r["attr_filter_details"]:
+            if af.get("reliable", True):
+                tag = "🟢 完全回収"
+            else:
+                tag = f"🟡 部分回収（回答率{af['coverage']*100:.0f}%）"
+            st.write(
+                f"　・**{af['category']}**：{' / '.join(af['values'])}"
+                f"　→ {af['matched']:,}人（全体の{af['ratio']}%）　{tag}"
+            )
+            if not af.get("reliable", True):
+                st.caption(
+                    "　　⚠️ このカテゴリは全員が回答しているわけではないため、"
+                    "実際の対象人数はこれより多い可能性があります。"
+                )
+
     st.divider()
 
     # 4つのメインメトリクス
@@ -364,10 +558,14 @@ def show_results(condition: str, analysis: dict, r: dict):
         st.write(f"• パネル総数：{r['total']:,}人")
         st.write(f"• 年代ベース（{' / '.join(r['include_ages'])}）：{r['age_base']:,}人")
         if r["gender_ratio"] < 1.0:
-            st.write(f"• 性別調整（×{r['gender_ratio']:.2f}）→ {r['demo_base']:,}人")
+            st.write(f"• 性別調整（×{r['gender_ratio']:.2f}）")
         if r["pref_ratio"] < 1.0:
-            st.write(f"• 地域調整（×{r['pref_ratio']:.2f}）→ {r['demo_base']:,}人")
-        st.write(f"• 行動・態度条件の出現率：{r['behavioral_rate']*100:.1f}%")
+            st.write(f"• 地域調整（×{r['pref_ratio']:.2f}）")
+        for af in r.get("attr_filter_details", []):
+            st.write(f"• {af['category']}フィルタ（×{af['ratio']/100:.4f} ＝ {af['matched']:,}人/{r['total']:,}人）")
+        st.write(f"• → 調整後母数：{r['demo_base']:,}人")
+        if r["behavioral_rate"] < 1.0:
+            st.write(f"• 行動・態度条件の出現率：{r['behavioral_rate']*100:.1f}%")
         st.write(f"• 最終推定対象人数：{r['est']:,}人")
 
     # クライアント共有用レポート
@@ -431,12 +629,10 @@ def page_calculation(api_key: str, panel: dict):
             st.error("計算に失敗しました。パネルデータの総数を確認してください。")
             return
 
-        # セッションに保存（ページ再描画時も表示を維持）
         st.session_state["calc_condition"] = condition.strip()
         st.session_state["calc_analysis"]  = analysis
         st.session_state["calc_results"]   = results
 
-        # 履歴に保存
         append_history({
             "datetime":    datetime.now().strftime("%Y/%m/%d %H:%M"),
             "condition":   condition.strip(),
@@ -449,7 +645,6 @@ def page_calculation(api_key: str, panel: dict):
             "results":     results,
         })
 
-    # 結果表示（セッションに保存済みなら再描画後も表示）
     if st.session_state.get("calc_results"):
         show_results(
             st.session_state["calc_condition"],
@@ -502,6 +697,7 @@ def page_panel_setup():
                 "age":        age_vals,
                 "gender":     {"男性": male, "女性": female},
                 "prefecture": panel.get("prefecture", {}),
+                "attributes": panel.get("attributes", {}),
             })
             st.success("✅ 保存しました！")
             st.rerun()
@@ -527,58 +723,76 @@ def page_panel_setup():
 
     # ── CSVインポート ──────────────────────────────────────────────
     with tab_csv:
-        st.subheader("CSVで一括入力")
-        st.write("以下のフォーマットで作成したCSVをアップロードすると、まとめて登録できます。")
-        st.code(
-            "属性区分,属性値,人数\n"
-            "総数,合計,120000\n"
-            "年代,10代,3200\n"
-            "年代,20代,18500\n"
-            "年代,30代,24100\n"
-            "年代,40代,22300\n"
-            "年代,50代,19800\n"
-            "年代,60代,14200\n"
-            "年代,70代以上,8900\n"
-            "性別,男性,55000\n"
-            "性別,女性,56000\n"
-            "都道府県,東京都,18200\n"
-            "都道府県,神奈川県,10400",
-            language="csv",
+        st.subheader("モニタスCSVをそのままアップロード")
+        st.write("モニタスからダウンロードしたCSVファイルをそのままアップロードしてください。")
+        st.info(
+            "**対応フォーマット**：モニタス標準フォーマット（カテゴリ, 属性値, 人数 の列構成）\n\n"
+            "自動読み込み：性別・年代・都道府県・未既婚・子有無・職業・業種・年収・職種・役職など\n"
+            "70代/80代/90代以上は「70代以上」に自動統合されます。"
         )
 
         uploaded = st.file_uploader("CSVファイルを選択", type=["csv"])
         if uploaded:
             try:
-                df = pd.read_csv(uploaded, header=0)
-                current = load_panel()
-                count_imported = 0
-                skip_rows = []
-                for idx, row in df.iterrows():
-                    cat = str(row.iloc[0]).strip()
-                    val = str(row.iloc[1]).strip()
-                    # 数字以外の値はスキップ
-                    try:
-                        count = int(str(row.iloc[2]).replace(",", "").replace("人", "").strip())
-                    except ValueError:
-                        skip_rows.append(f"行{idx+2}：「{row.iloc[2]}」は数字ではないためスキップ")
-                        continue
-                    if cat == "総数":
-                        current["total"] = count
-                        count_imported += 1
-                    elif cat == "年代" and val in AGE_GROUPS:
-                        current["age"][val] = count
-                        count_imported += 1
-                    elif cat == "性別" and val in GENDERS:
-                        current["gender"][val] = count
-                        count_imported += 1
-                    elif cat == "都道府県":
-                        current.setdefault("prefecture", {})[val] = count
-                        count_imported += 1
-                _save_json(PANEL_FILE, current)
-                st.success(f"✅ {count_imported}件を取り込み、保存しました！")
-                if skip_rows:
-                    st.warning("以下の行は数字でないためスキップしました：\n" + "\n".join(skip_rows))
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                df = pd.read_csv(uploaded, header=None, encoding="utf-8-sig")
+                result = _parse_monitas_csv(df)
+                _save_json(PANEL_FILE, result)
+
+                st.success(
+                    f"✅ 読み込み完了！\n\n"
+                    f"総数：{result['total']:,}人　"
+                    f"男性：{result['gender']['男性']:,}人　"
+                    f"女性：{result['gender']['女性']:,}人"
+                )
+
+                # 年代別プレビュー
+                st.write("**年代別**")
+                age_df = pd.DataFrame([
+                    {"年代": k, "人数": f"{v:,}人"}
+                    for k, v in result["age"].items() if v > 0
+                ])
+                if not age_df.empty:
+                    st.dataframe(age_df, use_container_width=True, hide_index=True)
+
+                # 都道府県プレビュー（上位10件）
+                if result.get("prefecture"):
+                    st.write("**都道府県別（上位10件）**")
+                    top_pref = sorted(
+                        result["prefecture"].items(), key=lambda x: x[1], reverse=True
+                    )[:10]
+                    pref_df = pd.DataFrame([
+                        {"都道府県": k, "人数": f"{v:,}人"} for k, v in top_pref
+                    ])
+                    st.dataframe(pref_df, use_container_width=True, hide_index=True)
+
+                # 追加属性カテゴリ一覧
+                if result.get("attributes"):
+                    st.write("**読み込まれた追加属性カテゴリ**")
+                    attr_rows = []
+                    for cat_name, cat_info in result["attributes"].items():
+                        cov = cat_info.get("coverage", 0)
+                        reliability = "🟢 完全回収" if cov >= 0.85 else f"🟡 部分回収（回答率{cov*100:.0f}%）"
+                        val_count = len(cat_info.get("data", {}))
+                        answered_total = sum(
+                            v for k, v in cat_info.get("data", {}).items()
+                            if k not in UNKNOWN_KEYS
+                        )
+                        attr_rows.append({
+                            "カテゴリ": cat_name,
+                            "選択肢数": f"{val_count}個",
+                            "回答人数": f"{answered_total:,}人",
+                            "回収状況": reliability,
+                        })
+                    st.dataframe(
+                        pd.DataFrame(attr_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    st.caption(
+                        "🟢完全回収：母数として直接使用　"
+                        "🟡部分回収：参考値として使用（実際の人数はより多い可能性あり）"
+                    )
+
             except Exception as e:
                 st.error(f"読み込みエラー: {e}")
 
@@ -595,7 +809,6 @@ def page_history():
         st.info("まだ計算履歴がありません。")
         return
 
-    # サマリーテーブル
     rows = []
     for h in history:
         cond = h.get("condition", "")
@@ -611,7 +824,6 @@ def page_history():
 
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    # 詳細表示
     st.divider()
     idx = st.selectbox(
         "詳細を見る（履歴を選択）",
@@ -640,8 +852,6 @@ def main():
         st.title("📊 モニタス\n出現率計算ツール")
         st.divider()
 
-        # APIキー入力（入力値はconfig.jsonに保存）
-        # Streamlit Cloud の Secrets に設定されていれば自動読み込み
         if "CLAUDE_API_KEY" in st.secrets:
             api_key = st.secrets["CLAUDE_API_KEY"]
             st.success("✅ APIキー設定済み")
@@ -665,14 +875,15 @@ def main():
 
         st.divider()
 
-        # パネルデータの状態を表示
         panel = load_panel()
         if panel["total"] > 0:
+            attr_count = len(panel.get("attributes", {}))
             st.success(f"✅ パネル設定済み\n**{panel['total']:,}人**")
+            if attr_count > 0:
+                st.caption(f"追加属性：{attr_count}カテゴリ読み込み済み")
         else:
             st.warning("⚠️ パネルデータ未設定\nまずパネルデータを入力してください")
 
-    # ページ切り替え
     panel = load_panel()
     if page == "📊 出現率計算":
         page_calculation(api_key, panel)
