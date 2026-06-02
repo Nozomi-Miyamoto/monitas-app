@@ -224,14 +224,13 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
 【モニターパネルデータ】
 {panel_text}
 
-次のJSON形式のみで回答してください（JSON以外のテキストは不要です）：
+次のJSON形式のみで回答してください（コードブロック不要・JSONオブジェクトのみ）：
 
-■ 単一ターゲットの場合（1種類の対象者）：
 {{
   "condition_summary": "条件を1〜2行で要約",
   "is_multi_group": false,
   "include_ages": ["30代", "40代", "50代"],
-  "exclude_ages": ["10代", "20代", "60代", "70代以上"],
+  "exclude_ages": ["10代", "70代以上"],
   "exclude_reason": "除外した理由",
   "gender_specified": false,
   "include_genders": ["男性", "女性"],
@@ -240,63 +239,29 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
   "attribute_filters": [
     {{"category": "カテゴリ名", "values": ["属性値1"], "is_reliable": true, "note": "理由"}}
   ],
-  "target_groups": [],
+  "target_groups": [
+    {{
+      "description": "グループの説明",
+      "attribute_filters": [{{"category": "職種", "values": ["値1"], "is_reliable": false, "note": "理由"}}],
+      "behavioral_rate": 0.40,
+      "behavioral_rate_min": 0.28,
+      "behavioral_rate_max": 0.52
+    }}
+  ],
   "behavioral_rate": 0.05,
   "behavioral_rate_min": 0.03,
-  "behavioral_rate_max": 0.08,
+  "behavioral_rate_max": 0.07,
   "behavioral_reasoning": "推計根拠",
   "confidence": "medium",
   "difficulty_reason": "難易度の理由",
   "relaxation_suggestions": [
-    {{"action": "緩和内容", "additional_est": 1500, "trade_off": "デメリット", "recommended": false}}
+    {{"action": "緩和内容", "additional_est": 1000, "trade_off": "デメリット", "recommended": true}}
   ],
   "warnings": []
 }}
 
-■ 複数の独立したターゲットグループ（OR条件）の場合：
-例）「人事担当者および教職員」「医師または看護師」のように異なる職種・職業が並列で含まれる場合
-{{
-  "condition_summary": "条件を1〜2行で要約",
-  "is_multi_group": true,
-  "include_ages": ["20代", "30代", "40代", "50代"],
-  "exclude_ages": ["10代", "70代以上"],
-  "exclude_reason": "除外理由",
-  "gender_specified": false,
-  "include_genders": ["男性", "女性"],
-  "prefecture_specified": false,
-  "include_prefectures": [],
-  "attribute_filters": [],
-  "target_groups": [
-    {{
-      "description": "グループ1の説明（例: 企業の人事担当者）",
-      "attribute_filters": [
-        {{"category": "職種", "values": ["人事(採用関連)", "人事(労務関連)"], "is_reliable": false, "note": "理由"}}
-      ],
-      "behavioral_rate": 0.30,
-      "behavioral_rate_min": 0.20,
-      "behavioral_rate_max": 0.40
-    }},
-    {{
-      "description": "グループ2の説明（例: 学校教職員）",
-      "attribute_filters": [
-        {{"category": "職種", "values": ["小学校教員", "中学校教員", "高等学校教員", "専門学校教員", "短大・大学・大学院教員"], "is_reliable": false, "note": "理由"}}
-      ],
-      "behavioral_rate": 0.35,
-      "behavioral_rate_min": 0.25,
-      "behavioral_rate_max": 0.45
-    }}
-  ],
-  "behavioral_rate": 0.0,
-  "behavioral_rate_min": 0.0,
-  "behavioral_rate_max": 0.0,
-  "behavioral_reasoning": "各グループの推計根拠をまとめて説明",
-  "confidence": "medium",
-  "difficulty_reason": "難易度の理由",
-  "relaxation_suggestions": [
-    {{"action": "緩和内容", "additional_est": 500, "trade_off": "デメリット", "recommended": true}}
-  ],
-  "warnings": []
-}}
+※ is_multi_group=false の場合は attribute_filters を使い target_groups は [] にする。
+※ is_multi_group=true の場合は target_groups に各グループを入れ attribute_filters は [] にする。
 
 【判断基準】※すべて「保守的・厳しめ」に設定すること
 
@@ -375,7 +340,7 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
 
     res = client.messages.create(
         model=MODEL,
-        max_tokens=3000,
+        max_tokens=4000,
         system="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。マークダウンのコードブロックは使わず、JSONオブジェクトをそのまま返してください。",
         messages=[{"role": "user", "content": user_prompt}],
     )
