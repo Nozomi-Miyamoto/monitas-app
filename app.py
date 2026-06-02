@@ -173,7 +173,8 @@ def _difficulty(adj_inc: float, adj_est_min: int) -> tuple[str, str, str]:
 # Claude API：条件分析
 # ─────────────────────────────────────────────────────────────────
 
-def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
+def analyze_condition(api_key: str, condition: str, panel: dict,
+                      has_multi_group: bool = False) -> dict:
     """調査条件をClaudeで分析し、回収見込み・難易度・緩和措置を返す"""
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -203,10 +204,13 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
                 lines.append(f"  ※他{len(items)-15}件省略")
     panel_text = "\n".join(lines)
 
-    # OR/AND検出（大文字・小文字・日本語表記を考慮）
+    # OR検出：引数フラグ or 条件文字列中の OR キーワード
     import re as _re
-    has_or  = bool(_re.search(r'\bOR\b|\bor\b|または|もしくは|および|かつ', condition))
-    or_hint = "\n⚠️ この入力には OR（複数グループ）の意味が含まれています。必ず is_multi_group=true にして target_groups を使ってください。" if has_or else ""
+    has_or  = has_multi_group or bool(_re.search(r'\bOR\b', condition))
+    or_hint = (
+        "\n⚠️ この入力には複数の対象グループ（OR条件）が含まれています。"
+        "必ず is_multi_group=true にして target_groups を使ってください。"
+    ) if has_or else ""
 
     user_prompt = f"""以下の入力から調査したいターゲット条件を読み取り、モニターパネルからの回収見込みを推計してください。{or_hint}
 
@@ -335,12 +339,11 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 
   【残り条件のタイプ別目安】（attribute_filters 適用後の残条件に対して）
 
-  A. 現在進行中の業務担当・関与（今まさにその業務を担当している）→ 0.44〜0.60
-     この範囲を必ず守ること。0.44 未満は使わない。
-     例）人事職種の中でオンライン試験実施を担当        → 0.44〜0.55
-     例）教職員の中でオンライン試験運営に携わる        → 0.48〜0.60
-     例）IT企業社員の中でクラウド移行プロジェクト担当  → 0.35〜0.45
-     例）経営企画・財務経理職種の担当者・責任者全般    → 0.50〜0.65
+  A. 現在進行中の業務担当・関与（今まさにその業務を担当している）→ 0.35〜0.60
+     例）人事職種の中でオンライン試験実施を担当        → 0.40〜0.55
+     例）教職員の中でオンライン試験運営に携わる        → 0.45〜0.60
+     例）IT企業社員の中でクラウド移行プロジェクト担当  → 0.25〜0.40
+     例）経営企画・財務経理職種の担当者・責任者全般    → 0.45〜0.60
 
   B. 属性条件のみで行動条件なし                       → 0.55〜0.70
      ※ 業種フィルタは自己申告精度が低いため上限 0.50
@@ -851,89 +854,82 @@ def page_calculation(api_key: str, panel: dict):
         return
 
     # セッション初期化
-    for key, default in [("n_targets", 1), ("n_conditions", 1)]:
-        if key not in st.session_state:
-            st.session_state[key] = default
+    if "n_filters" not in st.session_state:
+        st.session_state.n_filters = 1
+    if "n_groups" not in st.session_state:
+        st.session_state.n_groups = 1
 
-    # ── 調査対象 ───────────────────────────────────────────────────
-    st.write("**① 調査対象**")
-    st.caption("誰を対象にするか。属性・職業・役職・会社規模など。複数ある場合は AND/OR で追加。")
+    # ── ① 絞り込み条件（全員が満たす・AND） ───────────────────────
+    st.write("**① 絞り込み条件**")
+    st.caption("対象者が**全員満たす**条件を入力してください（会社規模・年代・地域・雇用形態など）")
 
-    target_items: list[tuple[str, str]] = []
-    placeholders_t = ["例）経営者", "例）1000名以上の企業", "例）40〜60代", "例）建設業界", "例）男性"]
-    for i in range(st.session_state.n_targets):
-        if i > 0:
-            col_op, _ = st.columns([2, 8])
-            with col_op:
-                op = st.radio("", ["AND", "OR"], key=f"t_op_{i}", horizontal=True)
-            target_items.append(("op", op))
+    ph_f = ["例）100名以上の企業", "例）30〜50代", "例）正社員", "例）関東在住", "例）男性"]
+    filter_texts = []
+    for i in range(st.session_state.n_filters):
         txt = st.text_input(
-            f"調査対象 {i+1}",
-            key=f"t_txt_{i}",
-            placeholder=placeholders_t[i % len(placeholders_t)],
-            label_visibility="visible",
+            f"絞り込み条件 {i+1}",
+            key=f"f_{i}",
+            placeholder=ph_f[i % len(ph_f)],
         )
-        target_items.append(("text", txt))
+        filter_texts.append(txt)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("＋ 調査対象を追加", use_container_width=True, key="add_t"):
-            if st.session_state.n_targets < 5:
-                st.session_state.n_targets += 1
+    ca, cb = st.columns(2)
+    with ca:
+        if st.button("＋ 絞り込み条件を追加", use_container_width=True, key="add_f"):
+            if st.session_state.n_filters < 5:
+                st.session_state.n_filters += 1
                 st.rerun()
-    with c2:
-        if st.session_state.n_targets > 1:
-            if st.button("－ 最後を削除", use_container_width=True, key="del_t"):
-                st.session_state.n_targets -= 1
+    with cb:
+        if st.session_state.n_filters > 1:
+            if st.button("－ 最後の条件を削除", use_container_width=True, key="del_f"):
+                st.session_state.n_filters -= 1
                 st.rerun()
 
     st.divider()
 
-    # ── 追加条件 ───────────────────────────────────────────────────
-    st.write("**② 追加条件**　（任意）")
-    st.caption("業種・行動・経験・意向など。業種を OR で並べると「どちらでも可」の合算計算になります。")
+    # ── ② 対象グループ（どれかひとつでOK・OR） ─────────────────────
+    st.write("**② 対象グループ**")
+    st.caption(
+        "職種・部門・業種など、**どれかひとつに当てはまれば対象**になる条件を入力してください。"
+        "　（複数入れると人数が合算されます）"
+    )
 
-    cond_items: list[tuple[str, str]] = []
-    placeholders_c = ["例）建設業界", "例）不動産業界", "例）過去1年で転職経験あり", "例）年収600万円以上"]
-    for i in range(st.session_state.n_conditions):
-        if i > 0:
-            col_op, _ = st.columns([2, 8])
-            with col_op:
-                op = st.radio("", ["OR", "AND"], key=f"c_op_{i}", horizontal=True)
-            cond_items.append(("op", op))
+    ph_g = ["例）経営担当者", "例）人事担当者", "例）現場責任者", "例）建設業界", "例）不動産業界"]
+    group_texts = []
+    for i in range(st.session_state.n_groups):
         txt = st.text_input(
-            f"条件 {i+1}",
-            key=f"c_txt_{i}",
-            placeholder=placeholders_c[i % len(placeholders_c)],
-            label_visibility="visible",
+            f"対象グループ {i+1}",
+            key=f"g_{i}",
+            placeholder=ph_g[i % len(ph_g)],
         )
-        cond_items.append(("text", txt))
+        group_texts.append(txt)
 
-    c3, c4 = st.columns(2)
-    with c3:
-        if st.button("＋ 条件を追加", use_container_width=True, key="add_c"):
-            if st.session_state.n_conditions < 5:
-                st.session_state.n_conditions += 1
+    cc, cd = st.columns(2)
+    with cc:
+        if st.button("＋ 対象グループを追加", use_container_width=True, key="add_g"):
+            if st.session_state.n_groups < 5:
+                st.session_state.n_groups += 1
                 st.rerun()
-    with c4:
-        if st.session_state.n_conditions > 1:
-            if st.button("－ 最後を削除", use_container_width=True, key="del_c"):
-                st.session_state.n_conditions -= 1
+    with cd:
+        if st.session_state.n_groups > 1:
+            if st.button("－ 最後のグループを削除", use_container_width=True, key="del_g"):
+                st.session_state.n_groups -= 1
                 st.rerun()
 
     # ── 条件文字列の組み立て ──────────────────────────────────────
-    target_str = _build_condition_str(target_items)
-    cond_str   = _build_condition_str(cond_items)
+    f_parts = [t.strip() for t in filter_texts if t.strip()]
+    g_parts = [t.strip() for t in group_texts  if t.strip()]
+    has_multi_group = len(g_parts) >= 2
 
     lines = []
-    if target_str:
-        lines.append(f"【調査対象】\n  {target_str}")
-    if cond_str:
-        lines.append(f"【追加条件】\n  {cond_str}")
+    if f_parts:
+        lines.append("【絞り込み条件（AND：全員が満たす）】\n  " + "\n  ".join(f_parts))
+    if g_parts:
+        lines.append("【対象グループ（OR：どれかひとつでOK）】\n  " + "\n  ".join(g_parts))
     condition = "\n".join(lines)
 
     if condition.strip():
-        with st.expander("📋 送信内容のプレビュー（Claudeへの入力）"):
+        with st.expander("📋 Claudeへの送信内容プレビュー"):
             st.code(condition, language=None)
 
     st.divider()
@@ -949,8 +945,10 @@ def page_calculation(api_key: str, panel: dict):
     ):
         with st.spinner("Claudeが分析中... （10〜20秒かかります）"):
             try:
-                analysis = analyze_condition(api_key, condition.strip(), panel)
-                results  = calculate(panel, analysis, activity_rate)
+                analysis = analyze_condition(
+                    api_key, condition.strip(), panel, has_multi_group
+                )
+                results = calculate(panel, analysis, activity_rate)
             except json.JSONDecodeError:
                 st.error("AIの応答を解析できませんでした。もう一度お試しください。")
                 return
