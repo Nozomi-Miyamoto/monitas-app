@@ -312,12 +312,21 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 ・attribute_filters（単一グループ時）: 条件に「直接かつ明確に」関連するカテゴリのみ。
   「間違いなく当てはまる」値のみ（周辺的な値は含めない）
 
-  【重要：職業と職種の二重フィルタ禁止】
-  職種カテゴリを使う場合、職業カテゴリは attribute_filters に入れないこと。
-  理由：職種の人は職業の中に含まれており、両方を掛け算すると重複除外になり
-  実際より大幅に少ない人数が出てしまう（例：人事職種1,695人は会社員の内側にいる）。
-  → 職種・役職・雇用形態があれば、職業は不要。より具体的な方だけを使うこと。
-  同様に、業種と職業も基本的に同時使用しない（業種フィルタがあれば職業は不要）。
+  【重要：相関フィルタの二重使用禁止】
+  以下の組み合わせは「二重フィルタ」になるため禁止。どちらか一方（より具体的な方）のみ使うこと。
+  × 職種 + 職業   → 職種のみ使う（職種の人は職業の中にいる）
+  × 職種 + 役職   → 職種のみ使う（担当者・責任者という役職条件は behavioral_rate で表現する）
+  × 業種 + 職業   → 業種のみ使う
+  × 役職 + 職業   → 役職のみ使う
+
+  例）「経営企画担当者」→ 職種=経営企画/事業企画 のみ。役職フィルタ不要。
+     behavioral_rate で「経営企画職種者の中での担当者割合（≒0.80）」を表現する。
+  例）「製造業の部長クラス」→ 業種=製造業系 + 役職=部長クラス は OK（これらは独立）
+
+  【重要：職種・役職の値は必ずパネルデータに表示された完全一致の文字列を使うこと】
+  例）「経営企画」→ パネルデータの「経営企画／事業企画」を使う（「営業企画」は別物）
+  例）「財務・経理」→ パネルデータの「財務／会計／経理」を使う
+  値の一部分だけで判断せず、パネルデータに表示されている選択肢一覧から正確に選ぶこと。
 
 ・behavioral_rate: 「attribute_filters で絞った後の対象者のうち、さらに条件に合う割合」
   ※ attribute_filters で職種・業種を既に絞っている場合、behavioral_rate は
@@ -396,15 +405,27 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 
 def _remove_redundant_filters(attr_filters: list) -> list:
     """
-    職種/役職/雇用形態 と 職業 が同時にある場合、職業を除去する。
-    業種 と 職業 が同時にある場合も職業を除去する。
-    （職種の人は職業の中に内包されているため二重フィルタになるのを防ぐ）
+    相関の強いフィルタが同時に使われる場合、より大きい（上位）カテゴリを除去する。
+
+    ルール：
+    ① 職種 があれば 職業・役職 を除去（職種は職業＋役職の交差を内包している）
+    ② 業種 があれば 職業 を除去（業種の人はすでに何らかの職業に就いている）
+    ③ 役職 だけで 職種 がない場合は 職業 を除去（役職も職業に内包）
+
+    理由：これらを独立フィルタとして掛け算すると実態より大幅に少なくなる。
     """
-    cats = [af.get("category", "") for af in attr_filters]
-    specific_cats = {"職種", "役職", "雇用形態", "業種"}
-    has_specific = any(c in specific_cats for c in cats)
-    if has_specific:
-        return [af for af in attr_filters if af.get("category") != "職業"]
+    cats = {af.get("category", "") for af in attr_filters}
+
+    remove = set()
+    if "職種" in cats:
+        remove |= {"職業", "役職"}   # 職種があれば職業・役職は不要
+    elif "役職" in cats:
+        remove |= {"職業"}            # 役職だけなら職業は不要
+    if "業種" in cats:
+        remove |= {"職業"}
+
+    if remove:
+        return [af for af in attr_filters if af.get("category") not in remove]
     return attr_filters
 
 
