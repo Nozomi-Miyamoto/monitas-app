@@ -217,86 +217,117 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 
 次のJSON形式のみで回答してください（JSON以外のテキストは不要です）：
 
+■ 単一ターゲットの場合（1種類の対象者）：
 {{
   "condition_summary": "条件を1〜2行で要約",
+  "is_multi_group": false,
   "include_ages": ["30代", "40代", "50代"],
   "exclude_ages": ["10代", "20代", "60代", "70代以上"],
-  "exclude_reason": "除外した理由の説明",
+  "exclude_reason": "除外した理由",
   "gender_specified": false,
   "include_genders": ["男性", "女性"],
   "prefecture_specified": false,
   "include_prefectures": [],
   "attribute_filters": [
-    {{
-      "category": "カテゴリ名",
-      "values": ["属性値1", "属性値2"],
-      "is_reliable": true,
-      "note": "このフィルタを選んだ理由"
-    }}
+    {{"category": "カテゴリ名", "values": ["属性値1"], "is_reliable": true, "note": "理由"}}
   ],
+  "target_groups": [],
   "behavioral_rate": 0.05,
   "behavioral_rate_min": 0.03,
   "behavioral_rate_max": 0.08,
-  "behavioral_reasoning": "推計根拠（統計データ・調査名を引用）",
+  "behavioral_reasoning": "推計根拠",
   "confidence": "medium",
-  "difficulty_reason": "この条件が難しい・易しい理由を1〜2文で説明",
+  "difficulty_reason": "難易度の理由",
   "relaxation_suggestions": [
+    {{"action": "緩和内容", "additional_est": 1500, "trade_off": "デメリット", "recommended": false}}
+  ],
+  "warnings": []
+}}
+
+■ 複数の独立したターゲットグループ（OR条件）の場合：
+例）「人事担当者および教職員」「医師または看護師」のように異なる職種・職業が並列で含まれる場合
+{{
+  "condition_summary": "条件を1〜2行で要約",
+  "is_multi_group": true,
+  "include_ages": ["20代", "30代", "40代", "50代"],
+  "exclude_ages": ["10代", "70代以上"],
+  "exclude_reason": "除外理由",
+  "gender_specified": false,
+  "include_genders": ["男性", "女性"],
+  "prefecture_specified": false,
+  "include_prefectures": [],
+  "attribute_filters": [],
+  "target_groups": [
     {{
-      "action": "緩和する内容（例: 年代を60代まで拡大）",
-      "additional_est": 1500,
-      "trade_off": "緩和した場合の条件純度・品質への影響",
-      "recommended": false
+      "description": "グループ1の説明（例: 企業の人事担当者）",
+      "attribute_filters": [
+        {{"category": "職種", "values": ["人事(採用関連)", "人事(労務関連)"], "is_reliable": false, "note": "理由"}}
+      ],
+      "behavioral_rate": 0.30,
+      "behavioral_rate_min": 0.20,
+      "behavioral_rate_max": 0.40
+    }},
+    {{
+      "description": "グループ2の説明（例: 学校教職員）",
+      "attribute_filters": [
+        {{"category": "職種", "values": ["小学校教員", "中学校教員", "高等学校教員", "専門学校教員", "短大・大学・大学院教員"], "is_reliable": false, "note": "理由"}}
+      ],
+      "behavioral_rate": 0.35,
+      "behavioral_rate_min": 0.25,
+      "behavioral_rate_max": 0.45
     }}
+  ],
+  "behavioral_rate": 0.0,
+  "behavioral_rate_min": 0.0,
+  "behavioral_rate_max": 0.0,
+  "behavioral_reasoning": "各グループの推計根拠をまとめて説明",
+  "confidence": "medium",
+  "difficulty_reason": "難易度の理由",
+  "relaxation_suggestions": [
+    {{"action": "緩和内容", "additional_est": 500, "trade_off": "デメリット", "recommended": true}}
   ],
   "warnings": []
 }}
 
 【判断基準】※すべて「保守的・厳しめ」に設定すること
 
+・is_multi_group: 条件に複数の「異なる職種・職業・役割」が「および／または」で並列している場合はtrue
+  - 例）「人事担当者および教職員」→ true（別の職業が並列）
+  - 例）「製造業の購買担当者」→ false（1種類のターゲット）
+  - is_multi_group=trueの場合はtarget_groupsに各グループを記載し、attribute_filtersは空にする
+
 ・include_ages: 条件に「確実に」該当する年代のみ。迷ったら除外する。
-  - 年代の境界は厳格に。「可能性がある」程度は除外する
-  例）NISA投資歴3年以内 → 10代・20代前半・70代以上を除外 → 20代後半〜60代
-  例）子育て中 → 10代・20代前半・60代以上を除外 → 20代後半〜50代
-  例）会社でのBtoB購買担当 → 10代・20代前半・60代以上を除外 → 20代後半〜50代
+  例）NISA投資歴3年以内 → 20代後半〜60代（10代・20代前半・70代以上を除外）
+  例）子育て中 → 20代後半〜50代（60代以上を除外）
 
-・attribute_filters: 条件に「直接かつ明確に」関連するカテゴリのみ。迷ったら含めない。
-  - 「間違いなく当てはまる」値のみ。周辺的な値は含めない
-  - 例）IT業界勤務 → 業種=ソフトウェア業・情報サービス業のみ（電気通信業等は含めない）
-  - 例）正社員会社員 → 職業=会社員3種のみ（自営業・パートは含めない）
+・attribute_filters（単一グループ時）: 条件に「直接かつ明確に」関連するカテゴリのみ。
+  - 「間違いなく当てはまる」値のみ（周辺的な値は含めない）
 
-・behavioral_rate: 以下の目安を厳守すること。迷ったら下限値を使う。
+・behavioral_rate: 以下の目安を厳守。迷ったら下限値を使う。
+  ① 職業・年代のみ（行動条件なし）              → 最大 0.60
+  ② 業種フィルタあり                            → 最大 0.40（自己申告精度が低いため）
+  ③ 職種・役職フィルタあり                      → 最大 0.35
+  ④ 行動経験あり（過去〇年以内に〇〇した）       → 0.05〜0.20
+  ⑤ 保有・利用中（〇〇を使っている）            → 0.08〜0.20
+  ⑥ 意向・態度（〇〇に関心）                    → 0.10〜0.25
+  ⑦ 条件が2つ以上重なる場合                     → 各上限のさらに50〜70%に下げる
+  ⑧ オンライン試験監視など特定業務の関与         → 0.25〜0.40（職種合致者のうち該当業務割合）
 
-  【条件タイプ別の上限目安】
-  ① 職業・年代のみ（行動条件なし）           → 最大 0.60
-  ② 業種フィルタが含まれる場合               → 最大 0.40
-    （業種は自己申告精度が低く、スクリーニング離脱率が特に高い）
-  ③ 職種・役職フィルタが含まれる場合         → 最大 0.35
-  ④ 行動経験あり（過去〇年以内に〇〇した）   → 0.05〜0.20
-  ⑤ 保有・利用中（〇〇を持っている/使っている）→ 0.08〜0.20
-  ⑥ 意向・態度（〇〇に関心がある/検討中）    → 0.10〜0.25
-  ⑦ 条件が2つ以上重なる場合                  → 各上限のさらに50〜70%に下げること
+  【数値例】
+  - NISA放置型投資歴3年以内 → 0.05〜0.09
+  - IT業界勤務のエンジニア → 0.25〜0.35
+  - 過去1年でクレカ新規作成 → 0.06〜0.12
+  - 小学生以下の子を持つ共働き母親 → 0.30〜0.45
+  - 会社員（行動条件なし） → 0.55〜0.60
+  - オンライン試験に携わる人事・教職員 → 0.30〜0.40
 
-  【具体的な数値例（参考）】
-  - 「NISA放置型投資歴3年以内」          → 0.05〜0.09
-  - 「IT業界勤務のエンジニア」           → 0.25〜0.35
-  - 「過去1年でクレジットカードを新規作成」→ 0.06〜0.12
-  - 「小学生以下の子を持つ共働き母親」   → 0.30〜0.45
-  - 「会社員（行動条件なし）」           → 0.55〜0.60
-  - 「製造業の購買担当部長クラス」       → 0.04〜0.08
+  behavioral_rate_min は behavioral_rate の 55〜65% に設定すること
 
-  behavioral_rate_min は behavioral_rate の 50〜65% に設定すること
+・relaxation_suggestions: 3件。条件に書かれていない次元（年代・地域・職業など）も自由に提案してよい。
+  - 3件のうち最も効果的な1件に recommended: true を設定すること
+  - trade_offに必ずデメリットを記載する
 
-・relaxation_suggestions: 3件、具体的かつ効果的な緩和案を提示すること
-  - 【重要】元の条件に書かれていない次元（年代・地域・性別・婚姻状況・職業など）も自由に緩和案として提案してよい
-    例）条件に年代指定がなくても「年代を〇〇代まで絞らず広げる」を提案可
-    例）条件に地域指定がなくても「首都圏限定にすれば純度が上がる」を提案可
-  - additional_est はパネルデータの実数と行動率を踏まえたAI推計（概算）
-  - 3件のうち最も効果的・現実的な1件に recommended: true を設定すること
-    （条件の本質を保ちながら、最も効率よく回収数を増やせる案）
-  - 残り2件は recommended: false
-  - 緩和した場合のデメリット・純度への影響を必ずtrade_offに記載する
-
-・confidence: high（公的統計を具体的に引用可能）/ medium（業界推計あり）/ low（根拠が薄い）
+・confidence: high（公的統計引用可）/ medium（業界推計あり）/ low（根拠が薄い）
 ・性別・地域が条件に明示されていなければ specified = false
 """
 
@@ -335,36 +366,11 @@ def analyze_condition(api_key: str, condition: str, panel: dict) -> dict:
 # 計算ロジック
 # ─────────────────────────────────────────────────────────────────
 
-def calculate(panel: dict, analysis: dict, activity_rate: float = 0.6) -> dict | None:
-    """回収見込み人数・難易度を計算する（目標n数不要）"""
-
-    total = panel["total"]
-    if total == 0:
-        return None
-
-    # ① 年代ベース
-    include_ages = analysis.get("include_ages", AGE_GROUPS)
-    age_base = sum(panel["age"].get(a, 0) for a in include_ages)
-
-    # ② 性別調整
-    gender_ratio = 1.0
-    if analysis.get("gender_specified"):
-        genders  = analysis.get("include_genders", GENDERS)
-        g_count  = sum(panel["gender"].get(g, 0) for g in genders)
-        gender_ratio = g_count / total if total > 0 else 1.0
-
-    # ③ 都道府県調整
-    pref_ratio = 1.0
-    if analysis.get("prefecture_specified") and analysis.get("include_prefectures"):
-        prefs = analysis["include_prefectures"]
-        if panel.get("prefecture"):
-            p_count   = sum(panel["prefecture"].get(p, 0) for p in prefs)
-            pref_ratio = p_count / total if total > 0 else 1.0
-
-    # ④ 追加属性フィルタ
-    attr_filter_details = []
+def _calc_attr_filters(panel: dict, attr_filters: list, total: int) -> tuple[float, list]:
+    """属性フィルタを処理してattr_combined_ratioとdetailsを返す"""
     attr_combined_ratio = 1.0
-    for af in analysis.get("attribute_filters", []):
+    details = []
+    for af in attr_filters:
         cat_name = af.get("category", "")
         values   = af.get("values", [])
         if not cat_name or not values:
@@ -377,7 +383,7 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.6) -> dict |
         matched = sum(cat_data.get(v, 0) for v in values)
         ratio   = matched / total if total > 0 else 0.0
         attr_combined_ratio *= ratio
-        attr_filter_details.append({
+        details.append({
             "category": cat_name,
             "values":   values,
             "matched":  matched,
@@ -386,31 +392,133 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.6) -> dict |
             "reliable": af.get("is_reliable", coverage >= 0.85),
             "note":     af.get("note", ""),
         })
+    return attr_combined_ratio, details
 
-    # ⑤ 人口学的ベース（独立性仮定）
-    age_ratio = age_base / total if total > 0 else 1.0
-    demo_base = total * age_ratio * gender_ratio * pref_ratio * attr_combined_ratio
 
-    # ⑥ 行動・態度条件
-    brate     = min(float(analysis.get("behavioral_rate",     1.0)), 1.0)
-    brate_min = min(float(analysis.get("behavioral_rate_min", brate * 0.6)), 1.0)
-    brate_max = min(float(analysis.get("behavioral_rate_max", brate * 1.4)), 1.0)
+def _calc_one_group(panel: dict, group: dict, age_ratio: float,
+                    gender_ratio: float, pref_ratio: float,
+                    activity_rate: float) -> dict:
+    """1つのターゲットグループを計算して結果dictを返す"""
+    total = panel["total"]
+    attr_ratio, attr_details = _calc_attr_filters(
+        panel, group.get("attribute_filters", []), total
+    )
+    demo_base = total * age_ratio * gender_ratio * pref_ratio * attr_ratio
+
+    brate     = min(float(group.get("behavioral_rate",     1.0)), 1.0)
+    brate_min = min(float(group.get("behavioral_rate_min", brate * 0.6)), 1.0)
+    brate_max = min(float(group.get("behavioral_rate_max", brate * 1.4)), 1.0)
 
     est     = demo_base * brate
     est_min = demo_base * brate_min
     est_max = demo_base * brate_max
 
-    # ⑦ 回収率補正（パネル稼働率）
-    adj_est     = est     * activity_rate
-    adj_est_min = est_min * activity_rate
-    adj_est_max = est_max * activity_rate
+    return {
+        "description":       group.get("description", ""),
+        "demo_base":         int(demo_base),
+        "attr_filter_details": attr_details,
+        "behavioral_rate":   brate,
+        "est":               int(est),
+        "est_min":           int(est_min),
+        "est_max":           int(est_max),
+        "adj_est":           int(est     * activity_rate),
+        "adj_est_min":       int(est_min * activity_rate),
+        "adj_est_max":       int(est_max * activity_rate),
+    }
 
+
+def calculate(panel: dict, analysis: dict, activity_rate: float = 0.45) -> dict | None:
+    """回収見込み人数・難易度を計算する（目標n数不要）"""
+
+    total = panel["total"]
+    if total == 0:
+        return None
+
+    # 年代ベース（全グループ共通）
+    include_ages = analysis.get("include_ages", AGE_GROUPS)
+    age_base  = sum(panel["age"].get(a, 0) for a in include_ages)
+    age_ratio = age_base / total if total > 0 else 1.0
+
+    # 性別調整（全グループ共通）
+    gender_ratio = 1.0
+    if analysis.get("gender_specified"):
+        genders  = analysis.get("include_genders", GENDERS)
+        g_count  = sum(panel["gender"].get(g, 0) for g in genders)
+        gender_ratio = g_count / total if total > 0 else 1.0
+
+    # 都道府県調整（全グループ共通）
+    pref_ratio = 1.0
+    if analysis.get("prefecture_specified") and analysis.get("include_prefectures"):
+        prefs = analysis["include_prefectures"]
+        if panel.get("prefecture"):
+            p_count   = sum(panel["prefecture"].get(p, 0) for p in prefs)
+            pref_ratio = p_count / total if total > 0 else 1.0
+
+    target_groups_raw = analysis.get("target_groups", [])
+    is_multi = analysis.get("is_multi_group", False) and len(target_groups_raw) > 0
+
+    if is_multi:
+        # ── OR条件：グループ別に計算して合算 ──────────────────────
+        group_results = [
+            _calc_one_group(panel, g, age_ratio, gender_ratio, pref_ratio, activity_rate)
+            for g in target_groups_raw
+        ]
+        adj_est     = sum(g["adj_est"]     for g in group_results)
+        adj_est_min = sum(g["adj_est_min"] for g in group_results)
+        adj_est_max = sum(g["adj_est_max"] for g in group_results)
+        est         = sum(g["est"]         for g in group_results)
+        est_min     = sum(g["est_min"]     for g in group_results)
+        est_max     = sum(g["est_max"]     for g in group_results)
+        demo_base   = sum(g["demo_base"]   for g in group_results)
+        attr_filter_details = []   # グループ別に表示するので不要
+        brate = sum(g["behavioral_rate"] for g in group_results) / len(group_results)
+
+    else:
+        # ── 単一ターゲット（従来ロジック） ───────────────────────
+        attr_combined_ratio, attr_filter_details = _calc_attr_filters(
+            panel, analysis.get("attribute_filters", []), total
+        )
+        demo_base = total * age_ratio * gender_ratio * pref_ratio * attr_combined_ratio
+
+        brate     = min(float(analysis.get("behavioral_rate",     1.0)), 1.0)
+        brate_min = min(float(analysis.get("behavioral_rate_min", brate * 0.6)), 1.0)
+        brate_max = min(float(analysis.get("behavioral_rate_max", brate * 1.4)), 1.0)
+
+        est     = demo_base * brate
+        est_min = demo_base * brate_min
+        est_max = demo_base * brate_max
+
+        adj_est     = est     * activity_rate
+        adj_est_min = est_min * activity_rate
+        adj_est_max = est_max * activity_rate
+        group_results = []
+
+    est     = max(est,     0)
+    est_min = max(est_min, 0)
+    est_max = max(est_max, 0)
+    adj_est     = max(adj_est,     0)
+    adj_est_min = max(adj_est_min, 0)
+    adj_est_max = max(adj_est_max, 0)
+
+    # 出現率
     adj_inc     = adj_est     / total * 100
     adj_inc_min = adj_est_min / total * 100
     adj_inc_max = adj_est_max / total * 100
 
-    # ⑧ 難易度判定
+    # 難易度判定
     difficulty, diff_color, diff_desc = _difficulty(adj_inc, int(adj_est_min))
+
+    # 以下は従来と同じ変数（単一グループ時のみ実際の値、マルチ時はダミー）
+    if not is_multi:
+        pass  # brate_min/max already set
+
+    # estを整数化（マルチの場合はすでにint）
+    est_int     = int(est)
+    est_min_int = int(est_min)
+    est_max_int = int(est_max)
+    adj_est_int     = int(adj_est)
+    adj_est_min_int = int(adj_est_min)
+    adj_est_max_int = int(adj_est_max)
 
     return {
         "total":               total,
@@ -418,19 +526,21 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.6) -> dict |
         "demo_base":           int(demo_base),
         "gender_ratio":        gender_ratio,
         "pref_ratio":          pref_ratio,
+        "is_multi_group":      is_multi,
+        "group_results":       group_results,
         "attr_filter_details": attr_filter_details,
         "include_ages":        include_ages,
         "exclude_ages":        analysis.get("exclude_ages", []),
         "behavioral_rate":     brate,
         # 理論値
-        "est":                 int(est),
-        "est_min":             int(est_min),
-        "est_max":             int(est_max),
-        # 実回収見込み（補正後）
+        "est":                 est_int,
+        "est_min":             est_min_int,
+        "est_max":             est_max_int,
+        # 実回収見込み
         "activity_rate":       activity_rate,
-        "adj_est":             int(adj_est),       # 一般的
-        "adj_est_min":         int(adj_est_min),   # 固め
-        "adj_est_max":         int(adj_est_max),
+        "adj_est":             adj_est_int,
+        "adj_est_min":         adj_est_min_int,
+        "adj_est_max":         adj_est_max_int,
         "adj_inc":             round(adj_inc,     2),
         "adj_inc_min":         round(adj_inc_min, 2),
         "adj_inc_max":         round(adj_inc_max, 2),
@@ -548,6 +658,20 @@ def show_results(condition: str, analysis: dict, r: dict):
             f"出現率 {r['adj_inc_min']}%",
         )
         st.caption("行動・態度条件の下限値で推計（保守的）")
+
+    # 複数グループの内訳（OR条件の場合）
+    if r.get("is_multi_group") and r.get("group_results"):
+        st.caption("▼ ターゲットグループ別の内訳（上記は合算値）")
+        cols_grp = st.columns(len(r["group_results"]))
+        for i, g in enumerate(r["group_results"]):
+            with cols_grp[i]:
+                st.write(f"**{g['description']}**")
+                st.write(f"一般的：{g['adj_est']:,}人")
+                st.write(f"固め：{g['adj_est_min']:,}人")
+                if g.get("attr_filter_details"):
+                    for af in g["attr_filter_details"]:
+                        tag = "🟢" if af.get("reliable") else "🟡"
+                        st.caption(f"{tag} {af['category']}：{af['matched']:,}人")
 
     # ── 緩和措置アドバイス ───────────────────────────────────────
     suggestions = analysis.get("relaxation_suggestions", [])
