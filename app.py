@@ -26,7 +26,7 @@ DATA_DIR        = "data"
 PANEL_FILE      = os.path.join(DATA_DIR, "panel_data.json")
 HISTORY_FILE    = os.path.join(DATA_DIR, "history.json")
 CONFIG_FILE     = os.path.join(DATA_DIR, "config.json")
-QA_HISTORY_FILE = os.path.join(DATA_DIR, "qa_history.json")
+QA_HISTORY_FILE = "qa_history.json"  # app.pyと同じ場所に配置
 MODEL           = "claude-sonnet-4-6"
 
 AGE_GROUPS   = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
