@@ -62,10 +62,6 @@ def load_panel() -> dict:
     })
 
 
-def load_history() -> list:
-    return _load_json(HISTORY_FILE, [])
-
-
 def load_config() -> dict:
     return _load_json(CONFIG_FILE, {"api_key": ""})
 
@@ -75,9 +71,17 @@ def save_config(cfg: dict):
 
 
 def append_history(entry: dict):
-    history = load_history()
-    history.insert(0, entry)
-    _save_json(HISTORY_FILE, history[:100])
+    """計算履歴をセッション（ブラウザ単位）に保存する。他のユーザーとは共有されない。"""
+    if "session_history" not in st.session_state:
+        st.session_state.session_history = []
+    st.session_state.session_history.insert(0, entry)
+    # 最新100件に制限
+    if len(st.session_state.session_history) > 100:
+        st.session_state.session_history = st.session_state.session_history[:100]
+
+
+def load_history() -> list:
+    return st.session_state.get("session_history", [])
 
 
 def load_qa_history() -> list:
@@ -734,7 +738,22 @@ def make_report(condition: str, analysis: dict, r: dict) -> str:
 # 結果表示
 # ─────────────────────────────────────────────────────────────────
 
+def reset_calc():
+    """計算状態・入力フォームをリセットしてTOPに戻る"""
+    for key in ["calc_condition", "calc_analysis", "calc_results"]:
+        st.session_state.pop(key, None)
+    st.session_state.n_filters = 1
+    st.session_state.n_groups  = 1
+    for i in range(5):
+        st.session_state.pop(f"f_{i}", None)
+        st.session_state.pop(f"g_{i}", None)
+
+
 def show_results(condition: str, analysis: dict, r: dict):
+
+    # ── TOPに戻るボタン ───────────────────────────────────────────
+    if st.button("🔄 新しい調査を始める", on_click=reset_calc):
+        st.rerun()
 
     st.divider()
 
@@ -1130,7 +1149,56 @@ def page_panel_setup():
 
 
 # ─────────────────────────────────────────────────────────────────
-# ページ③：計算履歴
+# ページ③：過去事例検索
+# ─────────────────────────────────────────────────────────────────
+
+def page_qa_search():
+    st.title("📋 過去事例を検索")
+    st.write("過去に試算した回収実績データを辞書として検索できます。")
+
+    qa_hist = load_qa_history()
+    if not qa_hist:
+        st.warning("事例データが見つかりません。")
+        return
+
+    # 検索ボックス
+    query = st.text_input(
+        "キーワードで検索",
+        placeholder="例）建設 経営者　／　看護師　／　IT エンジニア　／　投資",
+    )
+
+    # カテゴリフィルタ
+    categories = sorted({r["category"] for r in qa_hist})
+    selected_cat = st.selectbox("カテゴリで絞り込み（任意）", ["すべて"] + categories)
+
+    # 絞り込み
+    pool = qa_hist if selected_cat == "すべて" else [r for r in qa_hist if r["category"] == selected_cat]
+
+    if query.strip():
+        results = search_similar_cases(query.strip(), pool, top_k=20)
+    else:
+        results = pool[:50]  # 検索なしは先頭50件
+
+    st.caption(f"表示件数：{len(results)}件　（全{len(pool)}件）")
+
+    if results:
+        rows = []
+        for r in results:
+            rows.append({
+                "カテゴリ": r.get("category", ""),
+                "業界": r.get("industry", ""),
+                "対象者": r.get("target", "")[:50],
+                "回収実績": r.get("n_raw", ""),
+                "付加条件": r.get("conditions", "")[:40],
+                "備考": r.get("notes", "")[:60],
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=500)
+    else:
+        st.info("該当する事例が見つかりませんでした。")
+
+
+# ─────────────────────────────────────────────────────────────────
+# ページ④：計算履歴
 # ─────────────────────────────────────────────────────────────────
 
 def page_history():
@@ -1167,7 +1235,7 @@ def page_history():
 
     st.divider()
     if st.button("🗑️ 履歴をすべて削除", type="secondary"):
-        _save_json(HISTORY_FILE, [])
+        st.session_state.session_history = []
         st.success("削除しました")
         st.rerun()
 
@@ -1201,8 +1269,16 @@ def main():
 
         page = st.radio(
             "メニュー",
-            ["📊 回収見込み計算", "📁 計算履歴", "🔧 パネルデータ管理"],
+            ["📊 回収見込み計算", "📁 計算履歴", "📋 事例検索"],
         )
+
+        st.divider()
+        # 管理者設定（非表示・コード入力で開放）
+        with st.expander("⚙️ 管理者設定", expanded=False):
+            admin_code = st.text_input("管理者コード", type="password", key="admin_code")
+            if admin_code == "monitas":
+                st.session_state["admin_mode"] = True
+                st.success("管理者モードON")
 
         st.divider()
         panel = load_panel()
@@ -1219,8 +1295,16 @@ def main():
         page_calculation(api_key, panel)
     elif page == "📁 計算履歴":
         page_history()
-    else:
-        page_panel_setup()
+    elif page == "📋 事例検索":
+        page_qa_search()
+
+    # 管理者モードのみパネル管理を表示
+    if st.session_state.get("admin_mode"):
+        with st.sidebar:
+            if st.button("🔧 パネルデータ管理を開く"):
+                st.session_state["show_panel_mgmt"] = True
+        if st.session_state.get("show_panel_mgmt"):
+            page_panel_setup()
 
 
 if __name__ == "__main__":
