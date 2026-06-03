@@ -22,11 +22,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-DATA_DIR     = "data"
-PANEL_FILE   = os.path.join(DATA_DIR, "panel_data.json")
-HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
-CONFIG_FILE  = os.path.join(DATA_DIR, "config.json")
-MODEL        = "claude-sonnet-4-6"
+DATA_DIR        = "data"
+PANEL_FILE      = os.path.join(DATA_DIR, "panel_data.json")
+HISTORY_FILE    = os.path.join(DATA_DIR, "history.json")
+CONFIG_FILE     = os.path.join(DATA_DIR, "config.json")
+QA_HISTORY_FILE = os.path.join(DATA_DIR, "qa_history.json")
+MODEL           = "claude-sonnet-4-6"
 
 AGE_GROUPS   = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
 GENDERS      = ["男性", "女性"]
@@ -77,6 +78,66 @@ def append_history(entry: dict):
     history = load_history()
     history.insert(0, entry)
     _save_json(HISTORY_FILE, history[:100])
+
+
+def load_qa_history() -> list:
+    """過去のQ&A実績データを読み込む"""
+    return _load_json(QA_HISTORY_FILE, [])
+
+
+def search_similar_cases(condition: str, qa_history: list, top_k: int = 5) -> list:
+    """条件テキストに類似する過去の回収実績事例を返す（文字バイグラム類似度）"""
+    if not qa_history or not condition.strip():
+        return []
+
+    def bigrams(text: str) -> set:
+        t = text.replace(" ", "").replace("　", "")
+        return {t[i:i+2] for i in range(len(t) - 1)} if len(t) >= 2 else set()
+
+    q_bi = bigrams(condition)
+    if not q_bi:
+        return []
+
+    scored = []
+    for rec in qa_history:
+        # 対象者・業界・付加条件・備考を結合して類似度を計算
+        haystack = " ".join([
+            rec.get("target", ""),
+            rec.get("industry", ""),
+            rec.get("conditions", ""),
+            rec.get("category", ""),
+        ])
+        h_bi = bigrams(haystack)
+        overlap = len(q_bi & h_bi) / len(q_bi) if q_bi else 0
+        if overlap > 0.08:   # 最低スコアフィルタ
+            scored.append((overlap, rec))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in scored[:top_k]]
+
+
+def format_similar_cases(cases: list) -> str:
+    """類似事例をプロンプト用テキストに整形する"""
+    if not cases:
+        return ""
+    lines = ["【過去の類似回収実績（参考）】",
+             "以下は同類の条件で実際に試算した回収実績です。behavioral_rateの推計に活用してください。"]
+    for c in cases:
+        n_str = c.get("n_raw", "不明")
+        target = c.get("target", "")
+        industry = c.get("industry", "")
+        notes = c.get("notes", "").replace("\n", " ")[:80]  # 長すぎる場合は切る
+        conditions = c.get("conditions", "")
+        line = f"・対象：{target}"
+        if industry and industry != "指定なし":
+            line += f"（{industry}）"
+        line += f" → 回収実績：{n_str}人"
+        if conditions:
+            line += f"　条件：{conditions[:40]}"
+        if notes:
+            line += f"　備考：{notes}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -174,7 +235,8 @@ def _difficulty(adj_inc: float, adj_est_min: int) -> tuple[str, str, str]:
 # ─────────────────────────────────────────────────────────────────
 
 def analyze_condition(api_key: str, condition: str, panel: dict,
-                      has_multi_group: bool = False) -> dict:
+                      has_multi_group: bool = False,
+                      similar_cases: list | None = None) -> dict:
     """調査条件をClaudeで分析し、回収見込み・難易度・緩和措置を返す"""
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -212,6 +274,9 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
         "必ず is_multi_group=true にして target_groups を使ってください。"
     ) if has_or else ""
 
+    # 類似事例テキストを生成
+    similar_text = format_similar_cases(similar_cases or [])
+
     user_prompt = f"""以下の入力から調査したいターゲット条件を読み取り、モニターパネルからの回収見込みを推計してください。{or_hint}
 
 入力は箇条書き・口語・質問・相談文のどれでも構いません。
@@ -223,6 +288,7 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
 
 【モニターパネルデータ】
 {panel_text}
+{similar_text}
 
 次のJSON形式のみで回答してください（コードブロック不要・JSONオブジェクトのみ）：
 
@@ -781,6 +847,22 @@ def show_results(condition: str, analysis: dict, r: dict):
         st.write(f"・理論推定人数：{r['est']:,}人")
         st.write(f"・回収率補正（×{r['activity_rate']:.2f}）→ {r['adj_est']:,}人")
 
+    # ── 参照した過去事例 ─────────────────────────────────────────
+    qa_hist = load_qa_history()
+    similar = search_similar_cases(condition, qa_hist, top_k=5)
+    if similar:
+        with st.expander("📂 参照した過去の類似事例"):
+            st.caption("推計に使用した過去の回収実績データ（類似度順）")
+            rows = []
+            for c in similar:
+                rows.append({
+                    "対象者": c.get("target", "")[:40],
+                    "業界": c.get("industry", ""),
+                    "回収実績": c.get("n_raw", ""),
+                    "付加条件": c.get("conditions", "")[:30],
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
     # ── レポート ─────────────────────────────────────────────────
     st.divider()
     report_text = make_report(condition, analysis, r)
@@ -910,8 +992,10 @@ def page_calculation(api_key: str, panel: dict):
     ):
         with st.spinner("Claudeが分析中... （10〜20秒かかります）"):
             try:
+                qa_hist = load_qa_history()
+                similar = search_similar_cases(condition.strip(), qa_hist, top_k=5)
                 analysis = analyze_condition(
-                    api_key, condition.strip(), panel, has_multi_group
+                    api_key, condition.strip(), panel, has_multi_group, similar
                 )
                 results = calculate(panel, analysis, activity_rate)
             except json.JSONDecodeError:
