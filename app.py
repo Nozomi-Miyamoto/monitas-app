@@ -340,9 +340,22 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
   例）「人事担当者 OR 学校教職員」→ true（2グループ）
   例）「製造業の購買担当者」→ false（1種類）
 
-・include_ages: 条件に「確実に」該当する年代のみ。迷ったら除外。
-  例）NISA投資歴3年以内 → 20代後半〜60代
-  例）子育て中 → 20代後半〜50代
+・include_ages: 条件から合理的に推論して必ず設定すること。絶対に空リスト [] にしない。
+  - 条件に年代が明示されていなくても、職業・状況・ライフステージから推論する
+  - 「確実に対象外」の年代を除外し、残りをすべて含める
+  例）NISA投資歴3年以内 → ["20代","30代","40代","50代","60代"]
+  例）子育て中 → ["20代","30代","40代","50代"]
+  例）前職・前々職が自衛官 → 入隊最短でも18歳、退職後に就業している世代を想定
+    → ["30代","40代","50代","60代","70代以上"]（10代・20代は退職OBとして社会人である可能性が低い）
+  例）現役の大学生 → ["10代","20代"]
+  例）介護経験者 → ["30代","40代","50代","60代","70代以上"]
+
+・gender_specified: 条件から男女比が偏ることが明らかな場合は true にして絞り込む
+  - 明示されていなくても職業・状況から推論してよい
+  例）自衛官・消防士・警察官 → 男性比率が非常に高い → gender_specified=true, include_genders=["男性"]
+  例）保育士・看護師・産婦人科医 → 女性比率が高い → gender_specified=true, include_genders=["女性"]
+  例）経営者 → 男性比率は高いが女性も一定数いる → gender_specified=false（両方含める）
+  例）条件に「女性」「男性」と明示 → 必ず gender_specified=true
 
 ・attribute_filters（単一グループ時）: 条件に「直接かつ明確に」関連するカテゴリのみ。
   「間違いなく当てはまる」値のみ（周辺的な値は含めない）
@@ -535,7 +548,8 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.45) -> dict 
         return None
 
     # 年代ベース（全グループ共通）
-    include_ages = analysis.get("include_ages", AGE_GROUPS)
+    # include_agesが空の場合は全年代を対象にする（年代制限なし）
+    include_ages = analysis.get("include_ages", AGE_GROUPS) or AGE_GROUPS
     age_base  = sum(panel["age"].get(a, 0) for a in include_ages)
     age_ratio = age_base / total if total > 0 else 1.0
 
