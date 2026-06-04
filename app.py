@@ -1,5 +1,5 @@
 """
-モニタス 出現率計算ツール
+n数試算ツール
 クライアントの調査条件から回収見込み数・難易度を自動推計します
 """
 
@@ -16,7 +16,7 @@ from datetime import datetime
 # ─────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="モニタス 出現率計算ツール",
+    page_title="n数試算ツール",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -26,7 +26,7 @@ DATA_DIR        = "data"
 PANEL_FILE      = os.path.join(DATA_DIR, "panel_data.json")
 HISTORY_FILE    = os.path.join(DATA_DIR, "history.json")
 CONFIG_FILE     = os.path.join(DATA_DIR, "config.json")
-QA_HISTORY_FILE = "qa_history.json"  # app.pyと同じ場所に配置
+QA_HISTORY_FILE = "qa_history.json"
 MODEL           = "claude-sonnet-4-6"
 
 AGE_GROUPS   = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
@@ -34,6 +34,243 @@ GENDERS      = ["男性", "女性"]
 UNKNOWN_KEYS = {"未取得", "わからない", "不明", "無回答"}
 
 os.makedirs(DATA_DIR, exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────────
+# カスタムCSS
+# ─────────────────────────────────────────────────────────────────
+
+def inject_css():
+    st.markdown("""
+    <style>
+    /* ── フォント ── */
+    html, body, [class*="css"] {
+        font-family: 'Hiragino Sans', 'Yu Gothic UI', 'Noto Sans JP', sans-serif;
+    }
+
+    /* ── サイドバー背景 ── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0D2137 0%, #122B45 60%, #0A1A2B 100%);
+        border-right: 1px solid #1E3A52;
+    }
+    [data-testid="stSidebar"] .stMarkdown p,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stCaption {
+        color: #9BB8CF !important;
+    }
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #FFFFFF !important;
+    }
+    /* サイドバー内の区切り線 */
+    [data-testid="stSidebar"] hr {
+        border-color: #1E3A52 !important;
+        margin: 8px 0;
+    }
+
+    /* ── サイドバー ロゴボタン ── */
+    [data-testid="stSidebar"] .stButton > button[data-testid="baseButton-secondary"]:first-of-type {
+        background: transparent !important;
+        border: none !important;
+        color: #FFFFFF !important;
+        font-size: 18px !important;
+        font-weight: 700 !important;
+        padding: 8px 4px !important;
+        text-align: left !important;
+        letter-spacing: 0.02em;
+    }
+
+    /* ── サイドバー ナビゲーションボタン ── */
+    [data-testid="stSidebar"] .stButton > button {
+        width: 100%;
+        text-align: left;
+        border-radius: 8px;
+        font-size: 13px;
+        padding: 10px 14px;
+        transition: background 0.15s, color 0.15s;
+        border: none;
+    }
+    [data-testid="stSidebar"] .stButton > button[kind="secondary"] {
+        background: transparent;
+        color: #9BB8CF;
+    }
+    [data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
+        background: rgba(255,255,255,0.07);
+        color: #FFFFFF;
+    }
+    [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background: #0078C8;
+        color: #FFFFFF;
+        box-shadow: 0 2px 8px rgba(0,120,200,0.35);
+    }
+    [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+        background: #005FA0;
+    }
+
+    /* ── 「新しい調査」ボタン ── */
+    [data-testid="stSidebar"] .reset-btn > button {
+        background: rgba(255, 97, 42, 0.15) !important;
+        color: #FF8C5A !important;
+        border: 1px solid rgba(255, 97, 42, 0.3) !important;
+    }
+    [data-testid="stSidebar"] .reset-btn > button:hover {
+        background: rgba(255, 97, 42, 0.28) !important;
+    }
+
+    /* ── メインエリア背景 ── */
+    .main .block-container {
+        background-color: #F4F7FB;
+        padding-top: 1.8rem;
+        padding-bottom: 3rem;
+    }
+
+    /* ── ページタイトル ── */
+    h1 {
+        color: #0D2137;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+    }
+    h2, h3 {
+        color: #1A3A58;
+    }
+
+    /* ── メトリクスカード ── */
+    [data-testid="stMetric"] {
+        background: #FFFFFF;
+        border: 1px solid #D8E6F0;
+        border-radius: 14px;
+        padding: 20px 22px;
+        box-shadow: 0 2px 10px rgba(0,30,60,0.07);
+    }
+    [data-testid="stMetricLabel"] {
+        color: #4A6A8A !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stMetricValue"] {
+        color: #0078C8 !important;
+        font-size: 2rem !important;
+        font-weight: 800 !important;
+    }
+    [data-testid="stMetricDelta"] {
+        color: #2EA87A !important;
+        font-weight: 600 !important;
+    }
+
+    /* ── プライマリボタン（メインエリア） ── */
+    .main .stButton > button[kind="primary"] {
+        background: #0078C8;
+        border-color: #0078C8;
+        border-radius: 8px;
+        font-weight: 700;
+        padding: 10px 24px;
+        font-size: 15px;
+        box-shadow: 0 2px 10px rgba(0,120,200,0.30);
+        transition: background 0.15s;
+    }
+    .main .stButton > button[kind="primary"]:hover {
+        background: #005FA0;
+        border-color: #005FA0;
+    }
+
+    /* ── セカンダリボタン（メインエリア） ── */
+    .main .stButton > button[kind="secondary"] {
+        border-radius: 8px;
+        border-color: #C2D8EC;
+        color: #2A5070;
+        transition: background 0.15s;
+    }
+    .main .stButton > button[kind="secondary"]:hover {
+        background: #E4F0FA;
+    }
+
+    /* ── ボーダー付きコンテナ ── */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 14px !important;
+        border-color: #D8E6F0 !important;
+        background: #FFFFFF !important;
+        padding: 4px 4px !important;
+    }
+
+    /* ── アラート系 ── */
+    .stAlert {
+        border-radius: 10px;
+    }
+    [data-testid="stAlert"][kind="info"] {
+        background: #EAF4FB;
+        border-left-color: #0078C8;
+    }
+    [data-testid="stAlert"][kind="success"] {
+        background: #E6F7F0;
+        border-left-color: #2EA87A;
+    }
+    [data-testid="stAlert"][kind="warning"] {
+        background: #FFF5E6;
+        border-left-color: #F59E0B;
+    }
+
+    /* ── テキスト入力 ── */
+    .stTextInput > div > div > input {
+        border-radius: 8px;
+        border-color: #C2D8EC;
+    }
+    .stTextInput > div > div > input:focus {
+        border-color: #0078C8;
+        box-shadow: 0 0 0 2px rgba(0,120,200,0.15);
+    }
+
+    /* ── Expander ── */
+    [data-testid="stExpander"] {
+        background: #FFFFFF;
+        border: 1px solid #D8E6F0;
+        border-radius: 10px;
+    }
+    [data-testid="stExpanderToggleIcon"] {
+        color: #0078C8;
+    }
+
+    /* ── テーブル ── */
+    [data-testid="stDataFrame"] {
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #D8E6F0;
+    }
+
+    /* ── 区切り線 ── */
+    hr {
+        border-color: #D8E6F0;
+    }
+
+    /* ── サイドバー パネル情報 ── */
+    [data-testid="stSidebar"] [data-testid="stAlert"] {
+        border-radius: 8px;
+        font-size: 12px;
+    }
+
+    /* ── サイドバー input ── */
+    [data-testid="stSidebar"] .stTextInput > div > div > input {
+        background: rgba(255,255,255,0.08);
+        border-color: #2A4A66;
+        color: #FFFFFF;
+        border-radius: 6px;
+    }
+    [data-testid="stSidebar"] .stTextInput > div > div > input::placeholder {
+        color: #5A7A96;
+    }
+
+    /* ── サイドバー Expander ── */
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background: rgba(255,255,255,0.05);
+        border-color: #1E3A52;
+        border-radius: 8px;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+        color: #9BB8CF;
+        font-size: 12px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -75,7 +312,6 @@ def append_history(entry: dict):
     if "session_history" not in st.session_state:
         st.session_state.session_history = []
     st.session_state.session_history.insert(0, entry)
-    # 最新100件に制限
     if len(st.session_state.session_history) > 100:
         st.session_state.session_history = st.session_state.session_history[:100]
 
@@ -85,12 +321,10 @@ def load_history() -> list:
 
 
 def load_qa_history() -> list:
-    """過去のQ&A実績データを読み込む"""
     return _load_json(QA_HISTORY_FILE, [])
 
 
 def search_similar_cases(condition: str, qa_history: list, top_k: int = 5) -> list:
-    """条件テキストに類似する過去の回収実績事例を返す（文字バイグラム類似度）"""
     if not qa_history or not condition.strip():
         return []
 
@@ -104,7 +338,6 @@ def search_similar_cases(condition: str, qa_history: list, top_k: int = 5) -> li
 
     scored = []
     for rec in qa_history:
-        # 対象者・業界・付加条件・備考を結合して類似度を計算
         haystack = " ".join([
             rec.get("target", ""),
             rec.get("industry", ""),
@@ -113,7 +346,7 @@ def search_similar_cases(condition: str, qa_history: list, top_k: int = 5) -> li
         ])
         h_bi = bigrams(haystack)
         overlap = len(q_bi & h_bi) / len(q_bi) if q_bi else 0
-        if overlap > 0.08:   # 最低スコアフィルタ
+        if overlap > 0.08:
             scored.append((overlap, rec))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -121,7 +354,6 @@ def search_similar_cases(condition: str, qa_history: list, top_k: int = 5) -> li
 
 
 def format_similar_cases(cases: list) -> str:
-    """類似事例をプロンプト用テキストに整形する"""
     if not cases:
         return ""
     lines = ["【過去の類似回収実績（参考）】",
@@ -130,7 +362,7 @@ def format_similar_cases(cases: list) -> str:
         n_str = c.get("n_raw", "不明")
         target = c.get("target", "")
         industry = c.get("industry", "")
-        notes = c.get("notes", "").replace("\n", " ")[:80]  # 長すぎる場合は切る
+        notes = c.get("notes", "").replace("\n", " ")[:80]
         conditions = c.get("conditions", "")
         line = f"・対象：{target}"
         if industry and industry != "指定なし":
@@ -149,8 +381,6 @@ def format_similar_cases(cases: list) -> str:
 # ─────────────────────────────────────────────────────────────────
 
 def _parse_monitas_csv(df: pd.DataFrame) -> dict:
-    """モニタス母数シートのCSVを解析してパネルデータ辞書を返す"""
-
     def to_int(val) -> int:
         if pd.isna(val):
             return 0
@@ -223,7 +453,6 @@ def _parse_monitas_csv(df: pd.DataFrame) -> dict:
 # ─────────────────────────────────────────────────────────────────
 
 def _difficulty(adj_inc: float, adj_est_min: int) -> tuple[str, str, str]:
-    """補正後出現率・固め人数 → (ラベル, color, 説明文)"""
     if adj_inc >= 10.0 and adj_est_min >= 2000:
         return "易", "success", "回収しやすい条件です。十分な人数が見込めます。"
     elif adj_inc >= 3.0 and adj_est_min >= 500:
@@ -241,7 +470,6 @@ def _difficulty(adj_inc: float, adj_est_min: int) -> tuple[str, str, str]:
 def analyze_condition(api_key: str, condition: str, panel: dict,
                       has_multi_group: bool = False,
                       similar_cases: list | None = None) -> dict:
-    """調査条件をClaudeで分析し、回収見込み・難易度・緩和措置を返す"""
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -262,7 +490,6 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
             reliability = "完全回収" if cov >= 0.85 else f"部分回収（回答率{cov*100:.0f}%）"
             data = cat_info.get("data", {})
             lines.append(f"\n【{cat_name}】（{reliability}）")
-            # プロンプト長抑制のため上位15件のみ表示
             items = sorted(data.items(), key=lambda x: x[1], reverse=True)
             for val, cnt in items[:15]:
                 lines.append(f"  {val}: {cnt:,}人")
@@ -270,7 +497,6 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
                 lines.append(f"  ※他{len(items)-15}件省略")
     panel_text = "\n".join(lines)
 
-    # OR検出：引数フラグ or 条件文字列中の OR キーワード
     import re as _re
     has_or  = has_multi_group or bool(_re.search(r'\bOR\b', condition))
     or_hint = (
@@ -278,7 +504,6 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
         "必ず is_multi_group=true にして target_groups を使ってください。"
     ) if has_or else ""
 
-    # 類似事例テキストを生成
     similar_text = format_similar_cases(similar_cases or [])
 
     user_prompt = f"""以下の入力から調査したいターゲット条件を読み取り、モニターパネルからの回収見込みを推計してください。{or_hint}
@@ -429,7 +654,6 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
     )
     text = res.content[0].text.strip()
 
-    # コードブロック除去
     if "```" in text:
         for block in text.split("```")[1::2]:
             candidate = block.lstrip("json").strip()
@@ -438,13 +662,11 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
             except json.JSONDecodeError:
                 continue
 
-    # テキストをそのままパース
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # 最終手段：{ } で囲まれた最初のJSONオブジェクトを抽出
     m = re.search(r"\{[\s\S]*\}", text)
     if m:
         return json.loads(m.group())
@@ -457,33 +679,20 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
 # ─────────────────────────────────────────────────────────────────
 
 def _remove_redundant_filters(attr_filters: list) -> list:
-    """
-    相関の強いフィルタが同時に使われる場合、より大きい（上位）カテゴリを除去する。
-
-    ルール：
-    ① 職種 があれば 職業・役職 を除去（職種は職業＋役職の交差を内包している）
-    ② 業種 があれば 職業 を除去（業種の人はすでに何らかの職業に就いている）
-    ③ 役職 だけで 職種 がない場合は 職業 を除去（役職も職業に内包）
-
-    理由：これらを独立フィルタとして掛け算すると実態より大幅に少なくなる。
-    """
     cats = {af.get("category", "") for af in attr_filters}
-
     remove = set()
     if "職種" in cats:
-        remove |= {"職業", "役職"}   # 職種があれば職業・役職は不要
+        remove |= {"職業", "役職"}
     elif "役職" in cats:
-        remove |= {"職業"}            # 役職だけなら職業は不要
+        remove |= {"職業"}
     if "業種" in cats:
         remove |= {"職業"}
-
     if remove:
         return [af for af in attr_filters if af.get("category") not in remove]
     return attr_filters
 
 
 def _calc_attr_filters(panel: dict, attr_filters: list, total: int) -> tuple[float, list]:
-    """属性フィルタを処理してattr_combined_ratioとdetailsを返す"""
     attr_filters = _remove_redundant_filters(attr_filters)
     attr_combined_ratio = 1.0
     details = []
@@ -515,7 +724,6 @@ def _calc_attr_filters(panel: dict, attr_filters: list, total: int) -> tuple[flo
 def _calc_one_group(panel: dict, group: dict, age_ratio: float,
                     gender_ratio: float, pref_ratio: float,
                     activity_rate: float) -> dict:
-    """1つのターゲットグループを計算して結果dictを返す"""
     total = panel["total"]
     attr_ratio, attr_details = _calc_attr_filters(
         panel, group.get("attribute_filters", []), total
@@ -531,40 +739,34 @@ def _calc_one_group(panel: dict, group: dict, age_ratio: float,
     est_max = demo_base * brate_max
 
     return {
-        "description":       group.get("description", ""),
-        "demo_base":         int(demo_base),
+        "description":         group.get("description", ""),
+        "demo_base":           int(demo_base),
         "attr_filter_details": attr_details,
-        "behavioral_rate":   brate,
-        "est":               int(est),
-        "est_min":           int(est_min),
-        "est_max":           int(est_max),
-        "adj_est":           int(est     * activity_rate),
-        "adj_est_min":       int(est_min * activity_rate),
-        "adj_est_max":       int(est_max * activity_rate),
+        "behavioral_rate":     brate,
+        "est":                 int(est),
+        "est_min":             int(est_min),
+        "est_max":             int(est_max),
+        "adj_est":             int(est     * activity_rate),
+        "adj_est_min":         int(est_min * activity_rate),
+        "adj_est_max":         int(est_max * activity_rate),
     }
 
 
 def calculate(panel: dict, analysis: dict, activity_rate: float = 0.45) -> dict | None:
-    """回収見込み人数・難易度を計算する（目標n数不要）"""
-
     total = panel["total"]
     if total == 0:
         return None
 
-    # 年代ベース（全グループ共通）
-    # include_agesが空の場合は全年代を対象にする（年代制限なし）
     include_ages = analysis.get("include_ages", AGE_GROUPS) or AGE_GROUPS
     age_base  = sum(panel["age"].get(a, 0) for a in include_ages)
     age_ratio = age_base / total if total > 0 else 1.0
 
-    # 性別調整（全グループ共通）
     gender_ratio = 1.0
     if analysis.get("gender_specified"):
         genders  = analysis.get("include_genders", GENDERS)
         g_count  = sum(panel["gender"].get(g, 0) for g in genders)
         gender_ratio = g_count / total if total > 0 else 1.0
 
-    # 都道府県調整（全グループ共通）
     pref_ratio = 1.0
     if analysis.get("prefecture_specified") and analysis.get("include_prefectures"):
         prefs = analysis["include_prefectures"]
@@ -576,7 +778,6 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.45) -> dict 
     is_multi = analysis.get("is_multi_group", False) and len(target_groups_raw) > 0
 
     if is_multi:
-        # ── OR条件：グループ別に計算して合算 ──────────────────────
         group_results = [
             _calc_one_group(panel, g, age_ratio, gender_ratio, pref_ratio, activity_rate)
             for g in target_groups_raw
@@ -588,11 +789,9 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.45) -> dict 
         est_min     = sum(g["est_min"]     for g in group_results)
         est_max     = sum(g["est_max"]     for g in group_results)
         demo_base   = sum(g["demo_base"]   for g in group_results)
-        attr_filter_details = []   # グループ別に表示するので不要
+        attr_filter_details = []
         brate = sum(g["behavioral_rate"] for g in group_results) / len(group_results)
-
     else:
-        # ── 単一ターゲット（従来ロジック） ───────────────────────
         attr_combined_ratio, attr_filter_details = _calc_attr_filters(
             panel, analysis.get("attribute_filters", []), total
         )
@@ -618,25 +817,11 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.45) -> dict 
     adj_est_min = max(adj_est_min, 0)
     adj_est_max = max(adj_est_max, 0)
 
-    # 出現率
     adj_inc     = adj_est     / total * 100
     adj_inc_min = adj_est_min / total * 100
     adj_inc_max = adj_est_max / total * 100
 
-    # 難易度判定
     difficulty, diff_color, diff_desc = _difficulty(adj_inc, int(adj_est_min))
-
-    # 以下は従来と同じ変数（単一グループ時のみ実際の値、マルチ時はダミー）
-    if not is_multi:
-        pass  # brate_min/max already set
-
-    # estを整数化（マルチの場合はすでにint）
-    est_int     = int(est)
-    est_min_int = int(est_min)
-    est_max_int = int(est_max)
-    adj_est_int     = int(adj_est)
-    adj_est_min_int = int(adj_est_min)
-    adj_est_max_int = int(adj_est_max)
 
     return {
         "total":               total,
@@ -650,19 +835,16 @@ def calculate(panel: dict, analysis: dict, activity_rate: float = 0.45) -> dict 
         "include_ages":        include_ages,
         "exclude_ages":        analysis.get("exclude_ages", []),
         "behavioral_rate":     brate,
-        # 理論値
-        "est":                 est_int,
-        "est_min":             est_min_int,
-        "est_max":             est_max_int,
-        # 実回収見込み
+        "est":                 int(est),
+        "est_min":             int(est_min),
+        "est_max":             int(est_max),
         "activity_rate":       activity_rate,
-        "adj_est":             adj_est_int,
-        "adj_est_min":         adj_est_min_int,
-        "adj_est_max":         adj_est_max_int,
+        "adj_est":             int(adj_est),
+        "adj_est_min":         int(adj_est_min),
+        "adj_est_max":         int(adj_est_max),
         "adj_inc":             round(adj_inc,     2),
         "adj_inc_min":         round(adj_inc_min, 2),
         "adj_inc_max":         round(adj_inc_max, 2),
-        # 難易度
         "difficulty":          difficulty,
         "diff_color":          diff_color,
         "diff_desc":           diff_desc,
@@ -739,7 +921,6 @@ def make_report(condition: str, analysis: dict, r: dict) -> str:
 # ─────────────────────────────────────────────────────────────────
 
 def reset_calc():
-    """計算状態・入力フォームをリセットしてTOPに戻る"""
     for key in ["calc_condition", "calc_analysis", "calc_results"]:
         st.session_state.pop(key, None)
     st.session_state.n_filters = 1
@@ -750,12 +931,6 @@ def reset_calc():
 
 
 def show_results(condition: str, analysis: dict, r: dict):
-
-    # ── TOPに戻るボタン ───────────────────────────────────────────
-    if st.button("🔄 新しい調査を始める", on_click=reset_calc):
-        st.rerun()
-
-    st.divider()
 
     # ── 難易度バッジ ─────────────────────────────────────────────
     color_map = {
@@ -792,7 +967,6 @@ def show_results(condition: str, analysis: dict, r: dict):
         )
         st.caption("行動・態度条件の下限値で推計（保守的）")
 
-    # 複数グループの内訳（OR条件の場合）
     if r.get("is_multi_group") and r.get("group_results"):
         st.caption("▼ ターゲットグループ別の内訳（上記は合算値）")
         cols_grp = st.columns(len(r["group_results"]))
@@ -812,12 +986,11 @@ def show_results(condition: str, analysis: dict, r: dict):
         st.divider()
         st.write("**💡 n数を増やしたい場合の緩和措置**")
         st.caption("条件を変えた場合の追加回収見込み（AI推計・概算値）")
-        # おすすめを先頭に並び替え
         sorted_suggestions = sorted(suggestions, key=lambda s: not s.get("recommended", False))
         for s in sorted_suggestions:
-            action      = s.get("action", "")
-            additional  = s.get("additional_est", 0)
-            trade_off   = s.get("trade_off", "")
+            action         = s.get("action", "")
+            additional     = s.get("additional_est", 0)
+            trade_off      = s.get("trade_off", "")
             is_recommended = s.get("recommended", False)
             with st.container(border=True):
                 if is_recommended:
@@ -910,36 +1083,19 @@ def show_results(condition: str, analysis: dict, r: dict):
 # ページ①：出現率計算
 # ─────────────────────────────────────────────────────────────────
 
-def _build_condition_str(items: list[tuple[str, str]]) -> str:
-    """("op"|"text", value) のリストから条件文字列を生成する"""
-    parts = []
-    pending_op = None
-    for kind, val in items:
-        if kind == "op":
-            pending_op = val
-        elif kind == "text" and val.strip():
-            if not parts:
-                parts.append(val.strip())
-            else:
-                parts.append(f"\n  {pending_op or 'AND'} {val.strip()}")
-            pending_op = None
-    return "".join(parts)
-
-
 def page_calculation(api_key: str, panel: dict):
     st.title("📊 回収見込み計算")
 
     if panel["total"] == 0:
-        st.warning("⚠️ パネルデータが未設定です。「🔧 パネルデータ管理」からCSVをアップロードしてください。")
+        st.warning("⚠️ パネルデータが未設定です。管理者設定からパネルデータを更新してください。")
         return
 
-    # セッション初期化
     if "n_filters" not in st.session_state:
         st.session_state.n_filters = 1
     if "n_groups" not in st.session_state:
         st.session_state.n_groups = 1
 
-    # ── ① 絞り込み条件（全員が満たす・AND） ───────────────────────
+    # ── ① 絞り込み条件 ──────────────────────────────────────────
     st.write("**① 絞り込み条件**")
     st.caption("対象者が**全員満たす**条件を入力してください（会社規模・年代・地域・雇用形態など）")
 
@@ -967,7 +1123,7 @@ def page_calculation(api_key: str, panel: dict):
 
     st.divider()
 
-    # ── ② 対象グループ（どれかひとつでOK・OR） ─────────────────────
+    # ── ② 対象グループ ──────────────────────────────────────────
     st.write("**② 対象グループ**")
     st.caption(
         "職種・部門・業種など、**どれかひとつに当てはまれば対象**になる条件を入力してください。"
@@ -1061,6 +1217,7 @@ def page_calculation(api_key: str, panel: dict):
         })
 
     if st.session_state.get("calc_results"):
+        st.divider()
         show_results(
             st.session_state["calc_condition"],
             st.session_state["calc_analysis"],
@@ -1079,7 +1236,6 @@ def page_panel_setup():
     panel = load_panel()
     tab_view, tab_update = st.tabs(["📋 現在のパネルデータ", "📤 CSVで更新"])
 
-    # ── 現在のデータ表示（読み取り専用） ────────────────────────
     with tab_view:
         if panel["total"] == 0:
             st.warning("パネルデータが未設定です。「CSVで更新」タブからアップロードしてください。")
@@ -1122,7 +1278,6 @@ def page_panel_setup():
                 st.dataframe(pd.DataFrame(attr_rows), use_container_width=True, hide_index=True)
                 st.caption("🟢完全回収：母数として直接使用　🟡部分回収：参考値として使用")
 
-    # ── CSV更新 ──────────────────────────────────────────────────
     with tab_update:
         st.write("モニタスからダウンロードしたCSVをそのままアップロードしてください。")
         st.info(
@@ -1161,23 +1316,20 @@ def page_qa_search():
         st.warning("事例データが見つかりません。")
         return
 
-    # 検索ボックス
     query = st.text_input(
         "キーワードで検索",
         placeholder="例）建設 経営者　／　看護師　／　IT エンジニア　／　投資",
     )
 
-    # カテゴリフィルタ
     categories = sorted({r["category"] for r in qa_hist})
     selected_cat = st.selectbox("カテゴリで絞り込み（任意）", ["すべて"] + categories)
 
-    # 絞り込み
     pool = qa_hist if selected_cat == "すべて" else [r for r in qa_hist if r["category"] == selected_cat]
 
     if query.strip():
         results = search_similar_cases(query.strip(), pool, top_k=20)
     else:
-        results = pool[:50]  # 検索なしは先頭50件
+        results = pool[:50]
 
     st.caption(f"表示件数：{len(results)}件　（全{len(pool)}件）")
 
@@ -1245,15 +1397,32 @@ def page_history():
 # ─────────────────────────────────────────────────────────────────
 
 def main():
+    inject_css()
     config = load_config()
 
+    # ページ状態の初期化
+    if "page" not in st.session_state:
+        st.session_state["page"] = "calculation"
+
     with st.sidebar:
-        st.title("📊 モニタス\n出現率計算ツール")
+        # ── ロゴ（クリックで新しい調査へ） ──────────────────────
+        st.markdown("""
+        <div style="padding: 16px 4px 4px 4px;">
+            <div style="font-size:11px; color:#5A7A96; letter-spacing:0.08em; margin-bottom:2px;">POWERED BY CLAUDE AI</div>
+            <div style="font-size:20px; font-weight:800; color:#FFFFFF; letter-spacing:0.01em;">n数試算ツール</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🔄 新しい調査を始める", use_container_width=True, key="title_reset"):
+            reset_calc()
+            st.session_state["page"] = "calculation"
+            st.rerun()
+
         st.divider()
 
+        # ── API Key ──────────────────────────────────────────────
         if "CLAUDE_API_KEY" in st.secrets:
             api_key = st.secrets["CLAUDE_API_KEY"]
-            st.success("✅ APIキー設定済み")
         else:
             api_key = st.text_input(
                 "🔑 Claude API Key",
@@ -1267,13 +1436,21 @@ def main():
 
         st.divider()
 
-        page = st.radio(
-            "メニュー",
-            ["📊 回収見込み計算", "📁 計算履歴", "📋 事例検索"],
-        )
+        # ── ナビゲーション ───────────────────────────────────────
+        nav_items = [
+            ("calculation", "📊  回収見込み計算"),
+            ("history",     "📁  計算履歴"),
+            ("qa_search",   "📋  事例検索"),
+        ]
+        for page_key, label in nav_items:
+            btn_type = "primary" if st.session_state["page"] == page_key else "secondary"
+            if st.button(label, use_container_width=True, key=f"nav_{page_key}", type=btn_type):
+                st.session_state["page"] = page_key
+                st.rerun()
 
         st.divider()
-        # 管理者設定（非表示・コード入力で開放）
+
+        # ── 管理者設定 ───────────────────────────────────────────
         with st.expander("⚙️ 管理者設定", expanded=False):
             admin_code = st.text_input("管理者コード", type="password", key="admin_code")
             if admin_code == "monitas":
@@ -1281,6 +1458,8 @@ def main():
                 st.success("管理者モードON")
 
         st.divider()
+
+        # ── パネル状況 ───────────────────────────────────────────
         panel = load_panel()
         if panel["total"] > 0:
             attr_count = len(panel.get("attributes", {}))
@@ -1290,18 +1469,21 @@ def main():
         else:
             st.warning("⚠️ パネルデータ未設定")
 
+    # ── ルーティング ─────────────────────────────────────────────
     panel = load_panel()
-    if page == "📊 回収見込み計算":
+    current_page = st.session_state.get("page", "calculation")
+
+    if current_page == "calculation":
         page_calculation(api_key, panel)
-    elif page == "📁 計算履歴":
+    elif current_page == "history":
         page_history()
-    elif page == "📋 事例検索":
+    elif current_page == "qa_search":
         page_qa_search()
 
-    # 管理者モードのみパネル管理を表示
+    # 管理者モード：パネルデータ管理
     if st.session_state.get("admin_mode"):
         with st.sidebar:
-            if st.button("🔧 パネルデータ管理を開く"):
+            if st.button("🔧 パネルデータ管理を開く", use_container_width=True):
                 st.session_state["show_panel_mgmt"] = True
         if st.session_state.get("show_panel_mgmt"):
             page_panel_setup()
