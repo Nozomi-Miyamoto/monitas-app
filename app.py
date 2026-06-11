@@ -27,7 +27,7 @@ PANEL_FILE      = os.path.join(DATA_DIR, "panel_data.json")
 HISTORY_FILE    = os.path.join(DATA_DIR, "history.json")
 CONFIG_FILE     = os.path.join(DATA_DIR, "config.json")
 QA_HISTORY_FILE = "qa_history.json"
-MODEL           = "gemini-2.0-flash"
+MODEL           = "gemini-2.5-flash"
 
 AGE_GROUPS   = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
 GENDERS      = ["男性", "女性"]
