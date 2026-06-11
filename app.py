@@ -238,6 +238,13 @@ def inject_css():
         border: 1px solid #D8E6F0;
         border-radius: 10px;
     }
+    [data-testid="stExpander"] p,
+    [data-testid="stExpander"] span,
+    [data-testid="stExpander"] div,
+    [data-testid="stExpander"] li,
+    [data-testid="stExpander"] label {
+        color: #1A1A1A !important;
+    }
     [data-testid="stExpanderToggleIcon"] {
         color: #0078C8;
     }
