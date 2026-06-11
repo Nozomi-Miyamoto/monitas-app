@@ -118,11 +118,23 @@ def inject_css():
         background: rgba(255, 97, 42, 0.28) !important;
     }
 
-    /* ── メインエリア背景 ── */
+    /* ── メインエリア背景・文字色（ダークモード対策） ── */
     .main .block-container {
         background-color: #F4F7FB;
         padding-top: 1.8rem;
         padding-bottom: 3rem;
+        color: #1A1A1A;
+    }
+    .main .block-container p,
+    .main .block-container span,
+    .main .block-container li,
+    .main .block-container div {
+        color: #1A1A1A;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"] p,
+    [data-testid="stVerticalBlockBorderWrapper"] span,
+    [data-testid="stVerticalBlockBorderWrapper"] div {
+        color: #1A1A1A !important;
     }
 
     /* ── ページタイトル ── */
