@@ -601,7 +601,7 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
   attribute_filters に含めず、必ず behavioral_rate で表現すること。
   × 職種 + 職場規模 → 職種のみ attribute_filters に使い、企業規模の絞り込みは behavioral_rate で表現する
   例）「100名以上企業の経理担当者」
-    → attribute_filters = [{"category": "職種", "values": ["財務／会計／経理"]}]
+    → attribute_filters = [{{"category": "職種", "values": ["財務／会計／経理"]}}]
     → behavioral_rate = 0.40〜0.55（経理職種の中で100名以上企業に勤務している割合）
 
   例）「経営企画担当者」→ 職種=経営企画/事業企画 のみ。役職フィルタ不要。
@@ -1201,7 +1201,10 @@ def page_calculation(api_key: str, panel: dict):
                 st.error("AIの応答を解析できませんでした。もう一度お試しください。")
                 return
             except Exception as e:
-                st.error(f"エラー詳細: {e}")
+                if "API_KEY_INVALID" in str(e) or "API_KEY" in str(e) or "INVALID_ARGUMENT" in str(e):
+                    st.error("APIキーが無効です。サイドバーで正しいGemini APIキーを入力してください。")
+                else:
+                    st.error(f"エラーが発生しました: {e}")
                 return
 
         if results is None:
