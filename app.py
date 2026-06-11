@@ -5,7 +5,8 @@ n数試算ツール
 
 import re
 import streamlit as st
-import anthropic
+from google import genai
+from google.genai import types
 import json
 import os
 import pandas as pd
@@ -27,7 +28,7 @@ PANEL_FILE      = os.path.join(DATA_DIR, "panel_data.json")
 HISTORY_FILE    = os.path.join(DATA_DIR, "history.json")
 CONFIG_FILE     = os.path.join(DATA_DIR, "config.json")
 QA_HISTORY_FILE = "qa_history.json"
-MODEL           = "claude-sonnet-4-6"
+MODEL           = "gemini-2.0-flash"
 
 AGE_GROUPS   = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
 GENDERS      = ["男性", "女性"]
@@ -471,7 +472,7 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
                       has_multi_group: bool = False,
                       similar_cases: list | None = None) -> dict:
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     lines = [f"パネル総数: {panel['total']:,}人", "", "【年代別】（完全回収）"]
     for age, n in panel["age"].items():
@@ -654,13 +655,15 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
 ・性別・地域が条件に明示されていなければ specified = false
 """
 
-    res = client.messages.create(
+    res = client.models.generate_content(
         model=MODEL,
-        max_tokens=4000,
-        system="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。マークダウンのコードブロックは使わず、JSONオブジェクトをそのまま返してください。",
-        messages=[{"role": "user", "content": user_prompt}],
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。マークダウンのコードブロックは使わず、JSONオブジェクトをそのまま返してください。",
+            max_output_tokens=4000,
+        ),
     )
-    text = res.content[0].text.strip()
+    text = res.text.strip()
 
     if "```" in text:
         for block in text.split("```")[1::2]:
@@ -1199,8 +1202,8 @@ def page_calculation(api_key: str, panel: dict):
                 st.error("AIの応答を解析できませんでした。もう一度お試しください。")
                 return
             except Exception as e:
-                if "API_KEY_INVALID" in str(e) or "invalid" in str(e).lower():
-                    st.error("APIキーが無効です。サイドバーで正しいAPIキーを入力してください。")
+                if "API_KEY_INVALID" in str(e) or "invalid" in str(e).lower() or "INVALID_ARGUMENT" in str(e):
+                    st.error("APIキーが無効です。サイドバーで正しいGemini APIキーを入力してください。")
                 else:
                     st.error(f"エラーが発生しました: {e}")
                 return
@@ -1416,7 +1419,7 @@ def main():
         # ── ロゴ（クリックで新しい調査へ） ──────────────────────
         st.markdown("""
         <div style="padding: 16px 4px 4px 4px;">
-            <div style="font-size:11px; color:#5A7A96; letter-spacing:0.08em; margin-bottom:2px;">POWERED BY CLAUDE AI</div>
+            <div style="font-size:11px; color:#5A7A96; letter-spacing:0.08em; margin-bottom:2px;">POWERED BY GEMINI AI</div>
             <div style="font-size:20px; font-weight:800; color:#FFFFFF; letter-spacing:0.01em;">n数試算ツール</div>
         </div>
         """, unsafe_allow_html=True)
@@ -1429,14 +1432,16 @@ def main():
         st.divider()
 
         # ── API Key ──────────────────────────────────────────────
-        if "CLAUDE_API_KEY" in st.secrets:
-            api_key = st.secrets["CLAUDE_API_KEY"]
-        else:
+        try:
+            api_key = st.secrets.get("GEMINI_API_KEY", "")
+        except Exception:
+            api_key = ""
+        if not api_key:
             api_key = st.text_input(
-                "🔑 Claude API Key",
+                "🔑 Gemini API Key",
                 value=config.get("api_key", ""),
                 type="password",
-                help="console.anthropic.com から取得できます",
+                help="aistudio.google.com から取得できます",
             )
             if api_key != config.get("api_key", ""):
                 config["api_key"] = api_key
