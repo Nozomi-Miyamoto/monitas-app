@@ -667,6 +667,9 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
     )
     text = res.text.strip()
 
+    import streamlit as _st
+    _st.caption(f"🔍 DEBUG: {repr(text[:300])}")
+
     if "```" in text:
         for block in text.split("```")[1::2]:
             candidate = block.lstrip("json").strip()
