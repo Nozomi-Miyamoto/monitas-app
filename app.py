@@ -661,14 +661,11 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
     res = model.generate_content(
         user_prompt,
         generation_config=genai.types.GenerationConfig(
-            max_output_tokens=8000,
+            max_output_tokens=65536,
             response_mime_type="application/json",
         ),
     )
     text = res.text.strip()
-
-    import streamlit as _st
-    _st.caption(f"🔍 DEBUG: {repr(text[:300])}")
 
     if "```" in text:
         for block in text.split("```")[1::2]:
