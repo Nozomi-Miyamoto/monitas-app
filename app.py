@@ -1201,10 +1201,7 @@ def page_calculation(api_key: str, panel: dict):
                 st.error("AIの応答を解析できませんでした。もう一度お試しください。")
                 return
             except Exception as e:
-                if "API_KEY_INVALID" in str(e) or "invalid" in str(e).lower() or "INVALID_ARGUMENT" in str(e):
-                    st.error("APIキーが無効です。サイドバーで正しいGemini APIキーを入力してください。")
-                else:
-                    st.error(f"エラーが発生しました: {e}")
+                st.error(f"エラー詳細: {e}")
                 return
 
         if results is None:
