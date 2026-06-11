@@ -464,7 +464,7 @@ def _difficulty(adj_inc: float, adj_est_min: int) -> tuple[str, str, str]:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Claude API：条件分析
+# Gemini API：条件分析
 # ─────────────────────────────────────────────────────────────────
 
 def analyze_condition(api_key: str, condition: str, panel: dict,
@@ -1178,21 +1178,21 @@ def page_calculation(api_key: str, panel: dict):
     condition = "\n".join(lines)
 
     if condition.strip():
-        with st.expander("📋 Claudeへの送信内容プレビュー"):
+        with st.expander("📋 Gemini（2.5-flash）への送信内容プレビュー"):
             st.code(condition, language=None)
 
     st.divider()
     activity_rate = 0.45
 
     if not api_key:
-        st.warning("サイドバーでClaude API Keyを設定してください。")
+        st.warning("サイドバーでGemini API Keyを設定してください。")
 
     if st.button(
         "🔍 回収見込みを計算する",
         type="primary",
         disabled=(not condition.strip() or not api_key),
     ):
-        with st.spinner("Claudeが分析中... （10〜20秒かかります）"):
+        with st.spinner("Gemini（2.5-flash）が分析中... （10〜20秒かかります）"):
             try:
                 qa_hist = load_qa_history()
                 similar = search_similar_cases(condition.strip(), qa_hist, top_k=5)
