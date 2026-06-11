@@ -453,11 +453,11 @@ def _parse_monitas_csv(df: pd.DataFrame) -> dict:
 # ─────────────────────────────────────────────────────────────────
 
 def _difficulty(adj_inc: float, adj_est_min: int) -> tuple[str, str, str]:
-    if adj_inc >= 10.0 and adj_est_min >= 2000:
+    if adj_est_min >= 1000:
         return "易", "success", "回収しやすい条件です。十分な人数が見込めます。"
-    elif adj_inc >= 3.0 and adj_est_min >= 500:
+    elif adj_est_min >= 500:
         return "普通", "info", "標準的な回収難易度です。"
-    elif adj_inc >= 0.8 and adj_est_min >= 100:
+    elif adj_est_min >= 100:
         return "難", "warning", "回収に工夫が必要な条件です。緩和措置も検討してください。"
     else:
         return "困難", "error", "回収が非常に困難です。条件の見直しを強く推奨します。"
@@ -595,6 +595,14 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
   × 職種 + 役職   → 職種のみ使う（担当者・責任者という役職条件は behavioral_rate で表現する）
   × 業種 + 職業   → 業種のみ使う
   × 役職 + 職業   → 役職のみ使う
+
+  【重要：職場規模・企業規模は attribute_filters に絶対に含めない】
+  「従業員100名以上」「中小企業」「大企業」などの企業規模・職場規模の条件は
+  attribute_filters に含めず、必ず behavioral_rate で表現すること。
+  × 職種 + 職場規模 → 職種のみ attribute_filters に使い、企業規模の絞り込みは behavioral_rate で表現する
+  例）「100名以上企業の経理担当者」
+    → attribute_filters = [{"category": "職種", "values": ["財務／会計／経理"]}]
+    → behavioral_rate = 0.40〜0.55（経理職種の中で100名以上企業に勤務している割合）
 
   例）「経営企画担当者」→ 職種=経営企画/事業企画 のみ。役職フィルタ不要。
      behavioral_rate で「経営企画職種者の中での担当者割合（≒0.80）」を表現する。
