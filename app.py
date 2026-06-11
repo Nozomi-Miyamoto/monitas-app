@@ -660,13 +660,12 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
     )
     res = model.generate_content(
         user_prompt,
-        generation_config=genai.types.GenerationConfig(max_output_tokens=4000),
+        generation_config=genai.types.GenerationConfig(
+            max_output_tokens=8000,
+            response_mime_type="application/json",
+        ),
     )
     text = res.text.strip()
-
-    # デバッグ用：応答の先頭200文字を表示
-    import streamlit as _st
-    _st.caption(f"🔍 DEBUG: {text[:200]}")
 
     if "```" in text:
         for block in text.split("```")[1::2]:
