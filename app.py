@@ -5,8 +5,7 @@ n数試算ツール
 
 import re
 import streamlit as st
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 import json
 import os
 import pandas as pd
@@ -472,7 +471,7 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
                       has_multi_group: bool = False,
                       similar_cases: list | None = None) -> dict:
 
-    client = genai.Client(api_key=api_key)
+    genai.configure(api_key=api_key)
 
     lines = [f"パネル総数: {panel['total']:,}人", "", "【年代別】（完全回収）"]
     for age, n in panel["age"].items():
@@ -655,13 +654,13 @@ def analyze_condition(api_key: str, condition: str, panel: dict,
 ・性別・地域が条件に明示されていなければ specified = false
 """
 
-    res = client.models.generate_content(
-        model=MODEL,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(
-            system_instruction="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。マークダウンのコードブロックは使わず、JSONオブジェクトをそのまま返してください。",
-            max_output_tokens=4000,
-        ),
+    model = genai.GenerativeModel(
+        MODEL,
+        system_instruction="あなたは市場調査・パネル調査の専門家です。必ず有効なJSONのみを返してください。マークダウンのコードブロックは使わず、JSONオブジェクトをそのまま返してください。",
+    )
+    res = model.generate_content(
+        user_prompt,
+        generation_config=genai.types.GenerationConfig(max_output_tokens=4000),
     )
     text = res.text.strip()
 
